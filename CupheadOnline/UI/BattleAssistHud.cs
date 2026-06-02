@@ -19,18 +19,48 @@ namespace CupheadOnline.UI
         private static readonly Color BgColour = new Color(0.05f, 0.03f, 0.02f, 0.74f);
 
         private static string _trackedLevel = string.Empty;
-        private static float _battleStartedAt = -1f;
+        private static float _lastTimerTickAt = -1f;
+        private static float _elapsedSeconds;
         private static int _deaths;
         private static int _retries;
         private static int _parries;
 
         private CanvasGroup _canvasGroup;
+        private RectTransform _panelRect;
         private Text _title;
         private Text _body;
         private Text _hint;
 
-        public static float ElapsedSeconds =>
-            _battleStartedAt < 0f ? 0f : Mathf.Max(0f, Time.unscaledTime - _battleStartedAt);
+        public static float ElapsedSeconds => Mathf.Max(0f, _elapsedSeconds);
+
+        internal static bool TryGetPanelScreenRect(out Rect rect)
+        {
+            rect = new Rect();
+            if (Instance == null
+             || Instance._panelRect == null
+             || Instance._canvasGroup == null
+             || Instance._canvasGroup.alpha <= 0.01f)
+            {
+                return false;
+            }
+
+            var corners = new Vector3[4];
+            Instance._panelRect.GetWorldCorners(corners);
+            float minX = corners[0].x;
+            float minY = corners[0].y;
+            float maxX = corners[0].x;
+            float maxY = corners[0].y;
+            for (int i = 1; i < corners.Length; i++)
+            {
+                minX = Mathf.Min(minX, corners[i].x);
+                minY = Mathf.Min(minY, corners[i].y);
+                maxX = Mathf.Max(maxX, corners[i].x);
+                maxY = Mathf.Max(maxY, corners[i].y);
+            }
+
+            rect = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            return rect.width > 1f && rect.height > 1f;
+        }
 
         public static void Tick()
         {
@@ -42,6 +72,7 @@ namespace CupheadOnline.UI
 
             Ensure();
             TrackCurrentBattle();
+            UpdateTimer();
             if (Instance != null)
                 Instance.Refresh();
         }
@@ -61,7 +92,8 @@ namespace CupheadOnline.UI
                 return;
 
             _retries++;
-            _battleStartedAt = Time.unscaledTime;
+            _elapsedSeconds = 0f;
+            _lastTimerTickAt = Time.unscaledTime;
         }
 
         public static void RecordLocalParry(LevelPlayerController player)
@@ -76,7 +108,8 @@ namespace CupheadOnline.UI
         public static void Reset()
         {
             _trackedLevel = string.Empty;
-            _battleStartedAt = -1f;
+            _lastTimerTickAt = -1f;
+            _elapsedSeconds = 0f;
             _deaths = 0;
             _retries = 0;
             _parries = 0;
@@ -117,6 +150,7 @@ namespace CupheadOnline.UI
             var panel = new GameObject("BattleAssistPanel");
             panel.transform.SetParent(transform, false);
             var rt = panel.AddComponent<RectTransform>();
+            _panelRect = rt;
             rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot = new Vector2(0f, 1f);
             rt.anchoredPosition = new Vector2(18f, -18f);
@@ -182,10 +216,30 @@ namespace CupheadOnline.UI
                 return;
 
             _trackedLevel = levelKey;
-            _battleStartedAt = Time.unscaledTime;
+            _lastTimerTickAt = Time.unscaledTime;
+            _elapsedSeconds = 0f;
             _deaths = 0;
             _retries = 0;
             _parries = 0;
+        }
+
+        private static void UpdateTimer()
+        {
+            float now = Time.unscaledTime;
+            if (_lastTimerTickAt < 0f)
+            {
+                _lastTimerTickAt = now;
+                return;
+            }
+
+            bool paused;
+            try { paused = PauseManager.state == PauseManager.State.Paused || CupheadTime.IsPaused(); }
+            catch { paused = PauseManager.state == PauseManager.State.Paused; }
+
+            if (!paused)
+                _elapsedSeconds += Mathf.Max(0f, now - _lastTimerTickAt);
+
+            _lastTimerTickAt = now;
         }
 
         private static bool ShouldCountPlayer(LevelPlayerController player)
