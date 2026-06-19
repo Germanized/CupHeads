@@ -204,7 +204,7 @@ Write-Step "Restoring NuGet packages"
 Invoke-Checked { dotnet restore $ModProject --nologo } "NuGet restore failed."
 
 Write-Step "Building mod DLL ($Configuration)"
-Invoke-Checked { dotnet build $ModProject -c $Configuration --nologo --no-restore } "Mod build failed."
+Invoke-Checked { dotnet build $ModProject -c $Configuration --nologo --no-restore /p:DeployPluginOnBuild=false } "Mod build failed."
 
 $ModOutput = Join-Path $Root "CupheadOnline\bin\$Configuration\net35"
 $ModDll    = Join-Path $ModOutput "CupheadOnline.dll"

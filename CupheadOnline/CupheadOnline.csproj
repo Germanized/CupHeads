@@ -18,6 +18,7 @@
     <GameDir Condition="'$(GameDir)' == ''">H:\SteamLibrary\steamapps\common\Cuphead</GameDir>
     <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
     <ManagedDir>$(GameDir)\Cuphead_Data\Managed</ManagedDir>
+    <DeployPluginOnBuild Condition="'$(DeployPluginOnBuild)' == ''">true</DeployPluginOnBuild>
   </PropertyGroup>
 
   <!-- BCL assemblies — explicit so net35 SDK finds the game's copies -->
@@ -109,7 +110,7 @@
   </ItemGroup>
 
   <!-- Post-build: copy output DLL into BepInEx plugin folder -->
-  <Target Name="DeployPlugin" AfterTargets="Build">
+  <Target Name="DeployPlugin" AfterTargets="Build" Condition="'$(DeployPluginOnBuild)' == 'true'">
     <PropertyGroup>
       <PluginDir>$(BepInExDir)\plugins\CupheadOnline</PluginDir>
     </PropertyGroup>

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.24 - 2026-06-19
+
+- Fixed corrupted online loadout sync by replacing raw byte casts of Cuphead's large weapon/super/charm enum IDs with stable packet wire codes.
+- Added a weapon-prefab fallback guard so invalid or stale remote weapon IDs no longer crash Cuphead's weapon manager during shooting, death cleanup, or remote weapon switches.
+- Hardened online equip-card closing so either peer can back out of two-player equipment/internal menu states instead of waiting forever on mismatched local ready cards.
+- Updated the installer build configuration to avoid the unsigned portable build failing on Windows symlink extraction for electron-builder's code-sign helper.
+
 ## v1.2.23 - 2026-04-25
 
 - Replaced the hidden F11 local-dev toggle with an in-game CupHeads Dev Lab overlay.

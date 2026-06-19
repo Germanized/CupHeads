@@ -112,10 +112,10 @@ namespace CupheadOnline.Sync
             pkt = new LobbySyncPacket
             {
                 PlayerId  = (byte)MultiplayerSession.LocalId,
-                Weapon1   = (byte)loadout.primaryWeapon,
-                Weapon2   = (byte)loadout.secondaryWeapon,
-                Super     = (byte)loadout.super,
-                Charm     = (byte)loadout.charm,
+                Weapon1   = LoadoutCodec.EncodeWeapon(loadout.primaryWeapon),
+                Weapon2   = LoadoutCodec.EncodeWeapon(loadout.secondaryWeapon),
+                Super     = LoadoutCodec.EncodeSuper(loadout.super),
+                Charm     = LoadoutCodec.EncodeCharm(loadout.charm),
                 IsChalice = (byte)(isChalice ? 1 : 0),
             };
             return true;
@@ -129,10 +129,10 @@ namespace CupheadOnline.Sync
                     return;
 
                 var loadout = PlayerData.Data.Loadouts.GetPlayerLoadout(id);
-                loadout.primaryWeapon = (Weapon)pkt.Weapon1;
-                loadout.secondaryWeapon = (Weapon)pkt.Weapon2;
-                loadout.super = (Super)pkt.Super;
-                loadout.charm = (Charm)pkt.Charm;
+                loadout.primaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon1, primarySlot: true);
+                loadout.secondaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon2, primarySlot: false);
+                loadout.super = LoadoutCodec.DecodeSuper(pkt.Super);
+                loadout.charm = LoadoutCodec.DecodeCharm(pkt.Charm);
             }
             catch
             {
@@ -163,10 +163,10 @@ namespace CupheadOnline.Sync
                 return;
 
             var loadout = stats.Loadout;
-            loadout.primaryWeapon = (Weapon)pkt.Weapon1;
-            loadout.secondaryWeapon = (Weapon)pkt.Weapon2;
-            loadout.super = (Super)pkt.Super;
-            loadout.charm = (Charm)pkt.Charm;
+            loadout.primaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon1, primarySlot: true);
+            loadout.secondaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon2, primarySlot: false);
+            loadout.super = LoadoutCodec.DecodeSuper(pkt.Super);
+            loadout.charm = LoadoutCodec.DecodeCharm(pkt.Charm);
             Traverse.Create(stats).Property("Loadout").SetValue(loadout);
 
             try { stats.isChalice = pkt.IsChalice != 0; }

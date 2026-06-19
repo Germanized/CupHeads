@@ -1,6 +1,6 @@
 {
   "name": "cupheads-installer",
-  "version": "1.2.23",
+  "version": "1.2.24",
   "description": "Installer for the CupHeads multiplayer mod",
   "author": "Germanized / Sh0kr",
   "main": "main.js",
@@ -14,7 +14,8 @@
     "productName": "CupHeads",
     "win": {
       "target": [{ "target": "portable", "arch": ["x64"] }],
-      "icon": "assets/cupheads.ico"
+      "icon": "assets/cupheads.ico",
+      "signAndEditExecutable": false
     },
     "extraResources": [
       { "from": "assets", "to": "assets", "filter": ["**/*"] }

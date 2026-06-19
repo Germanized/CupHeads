@@ -110,7 +110,7 @@ namespace CupheadOnline.Sync
             // The weapon enum value was sent — try to switch to that weapon
             try
             {
-                var weapon = (Weapon)weaponId;
+                var weapon = LoadoutCodec.DecodeWeapon(weaponId, primarySlot: true);
                 // Call SwitchWeapon via reflection since it's likely private
                 var mi = typeof(LevelPlayerWeaponManager).GetMethod(
                     "SwitchWeapon",

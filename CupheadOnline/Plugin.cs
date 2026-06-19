@@ -226,6 +226,8 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonDownPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonUpPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(ParryPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(WeaponPrefabGetWeaponFallbackPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(AbstractEquipUICloseOnlinePatch));
 
             // Damage authority
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerDamagePatch));
@@ -422,6 +424,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.2.23";
+        public const string VERSION = "1.2.24";
     }
 }

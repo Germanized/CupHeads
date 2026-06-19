@@ -25,6 +25,8 @@ Steam P2P multiplayer for Cuphead, plus a desktop installer that handles the mod
 - Remote menu input routing so guests can drive Player Two interactions in overworld prompts, equip cards, and shop-style internal menus while the host remains authoritative
 - Defensive stale-packet guards for save selection, host snapshots, weapon events, revive grants, damage events, scene loads, and status updates
 - Save compatibility checks with warnings for mismatched progress, DLC state, or setup
+- Stable loadout packet encoding for Cuphead's weapon, super, and charm IDs, preventing invalid remote weapons from corrupting shooting or death cleanup
+- Defensive weapon-prefab fallback guards for stale/corrupt remote weapon IDs
 - Live connection HUD with role, status, session info, and sync warnings
 - In-game session panel with `F8` toggle for quick diagnostics and session state
 - Optional boss health bars during battle levels, using Cuphead's live boss health data when available
@@ -143,6 +145,8 @@ During the Steam session, guests are mapped onto Cuphead's native Player Two slo
 Keyboard and controller are both treated as live local inputs while a session is active. If a controller wakes up mid-run or Rewired assigns it to the other vanilla slot, CupHeads still routes it back to the local Steam player and keeps remote Player Two actions driven by the guest's Steam input frames.
 
 Internal scenes such as Porkrind's shop use the same routing path: the host remains the authority for scene transitions, while guest menu buttons are forwarded so Player Two can back out or interact instead of getting stuck on a mismatched local menu.
+
+Online equip-card exits are also guarded so a mismatched two-player equipment/menu state can close cleanly instead of waiting forever for both local cards to report ready on the same machine.
 
 ## Local Dev Testing
 

@@ -560,7 +560,7 @@ namespace CupheadOnline.Sync
         {
             try
             {
-                var weapon = (Weapon)weaponId;
+                var weapon = LoadoutCodec.DecodeWeapon(weaponId, primarySlot: true);
                 var mi = typeof(LevelPlayerWeaponManager).GetMethod(
                     "SwitchWeapon",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

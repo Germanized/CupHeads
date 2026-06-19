@@ -681,10 +681,10 @@ namespace CupheadOnline.Sync
             if (DLCManager.DLCEnabled()) flags |= 2;
             if (data != null && data.isPlayer1Mugman) flags |= 4;
 
-            byte weapon1 = 0;
-            byte weapon2 = 0;
-            byte super = 0;
-            byte charm = 0;
+            byte weapon1 = LoadoutCodec.NoneCode;
+            byte weapon2 = LoadoutCodec.NoneCode;
+            byte super = LoadoutCodec.NoneCode;
+            byte charm = LoadoutCodec.NoneCode;
             float baseCompletion = 0f;
             float dlcCompletion = 0f;
             ushort coins = 0;
@@ -699,10 +699,10 @@ namespace CupheadOnline.Sync
                 if (loadouts != null)
                 {
                     var loadout = loadouts.GetPlayerLoadout(PlayerId.PlayerOne);
-                    weapon1 = (byte)loadout.primaryWeapon;
-                    weapon2 = (byte)loadout.secondaryWeapon;
-                    super = (byte)loadout.super;
-                    charm = (byte)loadout.charm;
+                    weapon1 = LoadoutCodec.EncodeWeapon(loadout.primaryWeapon);
+                    weapon2 = LoadoutCodec.EncodeWeapon(loadout.secondaryWeapon);
+                    super = LoadoutCodec.EncodeSuper(loadout.super);
+                    charm = LoadoutCodec.EncodeCharm(loadout.charm);
                 }
             }
 
@@ -737,7 +737,7 @@ namespace CupheadOnline.Sync
                 return string.Empty;
 
             var value = profile.Value;
-            if (value.DlcEnabled && (Charm)value.Charm == Charm.charm_chalice)
+            if (value.DlcEnabled && LoadoutCodec.DecodeCharm(value.Charm) == Charm.charm_chalice)
                 return "Ms. Chalice";
             return value.Player1IsMugman ? "Mugman" : "Cuphead";
         }

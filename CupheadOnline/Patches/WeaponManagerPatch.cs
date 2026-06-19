@@ -58,7 +58,7 @@ namespace CupheadOnline.Patches
                 EventType = 4, // switch
                 AimX      = (sbyte)(motor?.LookDirection.x.Value ?? 1),
                 AimY      = 0,
-                WeaponId  = (byte)next,
+                WeaponId  = LoadoutCodec.EncodeWeapon(next),
                 Tick      = MultiplayerSession.Tick,
             };
             Plugin.Net.SendWeaponEvent(ref pkt);
