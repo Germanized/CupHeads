@@ -63,8 +63,17 @@ namespace CupheadOnline.Patches
             ref float topY,
             ref bool hasTop)
         {
-            var player = PlayerManager.GetPlayer(playerId);
-            if (player == null || player.IsDead)
+            AbstractPlayerController player;
+            try
+            {
+                player = PlayerManager.GetPlayer(playerId);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (player == null || player.IsDead || player.gameObject == null || !player.gameObject.activeInHierarchy)
                 return;
 
             count++;
@@ -221,8 +230,17 @@ namespace CupheadOnline.Patches
 
         static void AppendBuiltIn(List<AbstractPlayerController> players, PlayerId playerId)
         {
-            var player = PlayerManager.GetPlayer(playerId);
-            if (player == null || player.IsDead || !player.gameObject.activeInHierarchy)
+            AbstractPlayerController player;
+            try
+            {
+                player = PlayerManager.GetPlayer(playerId);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (player == null || player.IsDead || player.gameObject == null || !player.gameObject.activeInHierarchy)
                 return;
 
             players.Add(player);

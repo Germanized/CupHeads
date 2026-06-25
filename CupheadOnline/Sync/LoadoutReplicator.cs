@@ -29,6 +29,9 @@ namespace CupheadOnline.Sync
 
         public static void Apply(LobbySyncPacket pkt)
         {
+            if (!ShouldAccept(pkt.PlayerId))
+                return;
+
             _pending = pkt;
             ApplyToPlayerData((PlayerId)pkt.PlayerId, pkt);
             if (ShouldApplyLiveNow())
@@ -45,12 +48,27 @@ namespace CupheadOnline.Sync
 
         public static void ApplyPending(PlayerStatsManager stats, PlayerId id)
         {
+            PreparePendingForStats(id);
+            ApplyPreparedStats(stats, id);
+        }
+
+        public static void PreparePendingForStats(PlayerId id)
+        {
             if (!_pending.HasValue) return;
             var pkt = _pending.Value;
             if (pkt.PlayerId != (byte)id) return;
 
             ApplyToPlayerData(id, pkt);
-            ApplyToStats(stats, pkt);
+        }
+
+        public static void ApplyPreparedStats(PlayerStatsManager stats, PlayerId id)
+        {
+            if (!_pending.HasValue) return;
+            var pkt = _pending.Value;
+            if (pkt.PlayerId != (byte)id) return;
+
+            ApplyToPlayerData(id, pkt);
+            ApplyToStats(stats, id, pkt);
             _pending = null;
         }
 
@@ -129,10 +147,11 @@ namespace CupheadOnline.Sync
                     return;
 
                 var loadout = PlayerData.Data.Loadouts.GetPlayerLoadout(id);
-                loadout.primaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon1, primarySlot: true);
-                loadout.secondaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon2, primarySlot: false);
-                loadout.super = LoadoutCodec.DecodeSuper(pkt.Super);
-                loadout.charm = LoadoutCodec.DecodeCharm(pkt.Charm);
+                DecodedLoadout decoded = Decode(pkt, chaliceBlocked: false);
+                loadout.primaryWeapon = decoded.PrimaryWeapon;
+                loadout.secondaryWeapon = decoded.SecondaryWeapon;
+                loadout.super = decoded.Super;
+                loadout.charm = decoded.Charm;
             }
             catch
             {
@@ -154,23 +173,156 @@ namespace CupheadOnline.Sync
             if (player == null || player.stats == null)
                 return;
 
-            ApplyToStats(player.stats, pkt);
+            ApplyToStats(player.stats, id, pkt);
         }
 
-        static void ApplyToStats(PlayerStatsManager stats, LobbySyncPacket pkt)
+        static void ApplyToStats(PlayerStatsManager stats, PlayerId id, LobbySyncPacket pkt)
         {
             if (stats == null)
                 return;
 
             var loadout = stats.Loadout;
-            loadout.primaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon1, primarySlot: true);
-            loadout.secondaryWeapon = LoadoutCodec.DecodeWeapon(pkt.Weapon2, primarySlot: false);
-            loadout.super = LoadoutCodec.DecodeSuper(pkt.Super);
-            loadout.charm = LoadoutCodec.DecodeCharm(pkt.Charm);
+            if (loadout == null)
+                return;
+
+            DecodedLoadout decoded = Decode(pkt, IsChaliceBlocked(id));
+            loadout.primaryWeapon = decoded.PrimaryWeapon;
+            loadout.secondaryWeapon = decoded.SecondaryWeapon;
+            loadout.super = decoded.Super;
+            loadout.charm = decoded.Charm;
             Traverse.Create(stats).Property("Loadout").SetValue(loadout);
 
-            try { stats.isChalice = pkt.IsChalice != 0; }
+            try { stats.isChalice = decoded.IsChalice; }
             catch { }
+        }
+
+        struct DecodedLoadout
+        {
+            public Weapon PrimaryWeapon;
+            public Weapon SecondaryWeapon;
+            public Super Super;
+            public Charm Charm;
+            public bool IsChalice;
+        }
+
+        static DecodedLoadout Decode(LobbySyncPacket pkt, bool chaliceBlocked)
+        {
+            bool dlcAvailable = IsDlcAvailable();
+            var charm = SanitizeCharm(LoadoutCodec.DecodeCharm(pkt.Charm), dlcAvailable);
+            bool isChalice = !chaliceBlocked
+                && dlcAvailable
+                && pkt.IsChalice != 0
+                && charm == Charm.charm_chalice;
+
+            return new DecodedLoadout
+            {
+                PrimaryWeapon = SanitizeWeapon(LoadoutCodec.DecodeWeapon(pkt.Weapon1, primarySlot: true), primarySlot: true, dlcAvailable: dlcAvailable),
+                SecondaryWeapon = SanitizeWeapon(LoadoutCodec.DecodeWeapon(pkt.Weapon2, primarySlot: false), primarySlot: false, dlcAvailable: dlcAvailable),
+                Super = NormalizeSuperForCharacter(SanitizeSuper(LoadoutCodec.DecodeSuper(pkt.Super), dlcAvailable), isChalice),
+                Charm = charm,
+                IsChalice = isChalice,
+            };
+        }
+
+        static Weapon SanitizeWeapon(Weapon weapon, bool primarySlot, bool dlcAvailable)
+        {
+            if (!dlcAvailable && IsDlcWeapon(weapon))
+                return primarySlot ? Weapon.level_weapon_peashot : Weapon.None;
+
+            return LoadoutCodec.NormalizeWeapon(weapon, primarySlot);
+        }
+
+        static Super SanitizeSuper(Super super, bool dlcAvailable)
+        {
+            if (!dlcAvailable && IsDlcSuper(super))
+                return Super.None;
+
+            return super;
+        }
+
+        static Charm SanitizeCharm(Charm charm, bool dlcAvailable)
+        {
+            if (!dlcAvailable && IsDlcCharm(charm))
+                return Charm.None;
+
+            return charm;
+        }
+
+        static Super NormalizeSuperForCharacter(Super super, bool isChalice)
+        {
+            if (isChalice)
+            {
+                if (super == Super.level_super_beam) return Super.level_super_chalice_vert_beam;
+                if (super == Super.level_super_invincible) return Super.level_super_chalice_shield;
+                if (super == Super.level_super_ghost) return Super.level_super_chalice_iii;
+                if (super == Super.plane_super_bomb) return Super.plane_super_chalice_bomb;
+                return super;
+            }
+
+            if (super == Super.level_super_chalice_vert_beam) return Super.level_super_beam;
+            if (super == Super.level_super_chalice_shield) return Super.level_super_invincible;
+            if (super == Super.level_super_chalice_iii) return Super.level_super_ghost;
+            if (super == Super.level_super_chalice_bounce) return Super.None;
+            if (super == Super.plane_super_chalice_bomb) return Super.plane_super_bomb;
+            return super;
+        }
+
+        static bool IsDlcWeapon(Weapon weapon)
+        {
+            return weapon == Weapon.level_weapon_wide_shot
+                || weapon == Weapon.level_weapon_upshot
+                || weapon == Weapon.level_weapon_crackshot
+                || weapon == Weapon.level_weapon_splitter;
+        }
+
+        static bool IsDlcSuper(Super super)
+        {
+            return super == Super.level_super_chalice_iii
+                || super == Super.level_super_chalice_vert_beam
+                || super == Super.level_super_chalice_shield
+                || super == Super.level_super_chalice_bounce
+                || super == Super.plane_super_chalice_bomb;
+        }
+
+        static bool IsDlcCharm(Charm charm)
+        {
+            return charm == Charm.charm_chalice
+                || charm == Charm.charm_healer
+                || charm == Charm.charm_curse;
+        }
+
+        static bool IsDlcAvailable()
+        {
+            try { return DLCManager.DLCEnabled(); }
+            catch { return false; }
+        }
+
+        static bool IsChaliceBlocked(PlayerId id)
+        {
+            try
+            {
+                var blockedSlots = Level.Current != null ? Level.Current.BlockChaliceCharm : null;
+                int index = (int)id;
+                return blockedSlots != null
+                    && index >= 0
+                    && index < blockedSlots.Length
+                    && blockedSlots[index];
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        static bool ShouldAccept(byte playerId)
+        {
+            if (!MultiplayerSession.IsActive)
+                return true;
+
+            if (playerId > (byte)PlayerId.PlayerTwo)
+                return false;
+
+            return MultiplayerSession.IsNetworkControlledPlayer((PlayerId)playerId);
         }
 
         static bool ShouldBroadcastNow()

@@ -1074,7 +1074,9 @@ namespace CupheadOnline.Net
             var incoming = new PlayerStatePacket();
             incoming.Read(reader);
 
-            byte sessionParticipantId = GetOrAssignSessionParticipantId(sender);
+            byte sessionParticipantId = sender == _peerId
+                ? (byte)PlayerId.PlayerTwo
+                : GetOrAssignSessionParticipantId(sender);
             if (sessionParticipantId == INVALID_PARTICIPANT_ID)
                 return;
 

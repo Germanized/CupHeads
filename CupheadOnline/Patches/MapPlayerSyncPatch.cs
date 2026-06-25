@@ -190,6 +190,9 @@ namespace CupheadOnline.Patches
             if (player == null || !MultiplayerSession.IsNetworkControlledPlayer(player.id))
                 return true;
 
+            if (MultiplayerSession.IsHost && player.id <= PlayerId.PlayerTwo)
+                return true;
+
             sbyte x;
             sbyte y;
             bool moving;

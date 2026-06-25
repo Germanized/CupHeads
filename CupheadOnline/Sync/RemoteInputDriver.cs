@@ -25,7 +25,7 @@ namespace CupheadOnline.Sync
             public readonly int[] UpServedFrames = CreateServedFrameBuffer();
         }
 
-        const int MAX_STALL = 12; // ~200 ms at 60 Hz before inputs are released
+        const int MAX_STALL = 45; // ~750 ms at 60 Hz before inputs are released
 
         static readonly Dictionary<byte, RemoteInputState> _states =
             new Dictionary<byte, RemoteInputState>(2);
@@ -55,7 +55,7 @@ namespace CupheadOnline.Sync
 
             if (state.HasData)
                 state.Previous = state.Current;
-            else if (!state.HasReceivedTick)
+            else
                 state.Previous = default(InputFramePacket);
 
             state.Current = pkt;
@@ -137,7 +137,7 @@ namespace CupheadOnline.Sync
             if (state.StallFrames > MAX_STALL)
             {
                 // Starvation: zero all inputs so the proxy player stops moving.
-                state.Previous = state.Current;
+                state.Previous = default(InputFramePacket);
                 state.Current = default(InputFramePacket);
                 state.HasData = false;
                 state.DownEdges = 0u;

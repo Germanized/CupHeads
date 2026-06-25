@@ -91,7 +91,16 @@ namespace CupheadOnline.Patches
             var player = __instance.GetComponent<AbstractPlayerController>();
             if (player == null) return;
             if (MultiplayerSession.IsNetworkControlledPlayer(player.id))
-                LoadoutReplicator.ApplyPending(__instance, player.id);
+                LoadoutReplicator.PreparePendingForStats(player.id);
+        }
+
+        static void Postfix(PlayerStatsManager __instance)
+        {
+            if (!MultiplayerSession.IsActive) return;
+            var player = __instance.GetComponent<AbstractPlayerController>();
+            if (player == null) return;
+            if (MultiplayerSession.IsNetworkControlledPlayer(player.id))
+                LoadoutReplicator.ApplyPreparedStats(__instance, player.id);
         }
     }
 
