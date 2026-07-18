@@ -157,10 +157,7 @@ namespace CupheadOnline.UI
             rt.sizeDelta = new Vector2(330f, 92f);
 
             var bg = panel.AddComponent<Image>();
-            bg.color = BgColour;
-            var outline = panel.AddComponent<Outline>();
-            outline.effectColor = new Color(0.82f, 0.62f, 0.30f, 0.52f);
-            outline.effectDistance = new Vector2(1f, -1f);
+            CupheadUiTheme.StyleCard(bg, dark: true);
 
             _canvasGroup = panel.AddComponent<CanvasGroup>();
             _canvasGroup.interactable = false;
@@ -181,6 +178,8 @@ namespace CupheadOnline.UI
 
         private void Refresh()
         {
+            CupheadUiTheme.RefreshLabelFonts(gameObject);
+
             if (_canvasGroup != null)
                 _canvasGroup.alpha = Plugin.ShowBattleAssistHud ? 1f : 0f;
 
@@ -274,22 +273,9 @@ namespace CupheadOnline.UI
             Vector2 sizeDelta,
             TextAnchor anchor)
         {
-            var go = new GameObject("Text_" + content);
-            go.transform.SetParent(parent.transform, false);
-
-            var rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
-            rt.pivot = new Vector2(0f, 1f);
-            rt.anchoredPosition = position;
-            rt.sizeDelta = sizeDelta;
-
-            var text = go.AddComponent<Text>();
-            text.text = content;
-            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            text.fontSize = size;
-            text.color = color;
-            text.alignment = anchor;
-            return text;
+            return CupheadUiTheme.MakeLabel(
+                parent, content, size, color, position, sizeDelta,
+                anchor, new Vector2(0f, 1f));
         }
 
         private static string FormatTime(float seconds)

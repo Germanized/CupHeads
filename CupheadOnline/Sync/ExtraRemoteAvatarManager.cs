@@ -214,32 +214,46 @@ namespace CupheadOnline.Sync
                 motorTraverse.Property("TrueLookDirection").SetValue(dir);
             }
 
-            switch (pkt.EventType)
+            switch ((WeaponEventType)pkt.EventType)
             {
-                case 0:
+                case WeaponEventType.Fire:
                     SetShootingState(avatar, true, 0.11f);
                     TriggerAnimatorParam(avatar.Controller, "Shooting", true);
+                    SpawnAvatarTracer(avatar, pkt);
                     break;
 
-                case 1:
+                case WeaponEventType.Ex:
                     SetShootingState(avatar, true, 0.14f);
                     TriggerAnimatorTrigger(avatar.Controller, "Ex");
+                    SpawnAvatarTracer(avatar, pkt);
                     break;
 
-                case 2:
+                case WeaponEventType.Super:
                     SetShootingState(avatar, false, 0f);
                     TriggerAnimatorTrigger(avatar.Controller, "Super");
                     break;
 
-                case 3:
+                case WeaponEventType.Parry:
                     TriggerAnimatorTrigger(avatar.Controller, "Parry");
                     break;
 
-                case 4:
+                case WeaponEventType.Switch:
                     if (avatar.WeaponManager != null)
                         ApplyWeaponSwitch(avatar.WeaponManager, pkt.WeaponId);
                     break;
             }
+        }
+
+        static void SpawnAvatarTracer(AvatarState avatar, WeaponEventPacket pkt)
+        {
+            if (avatar == null || avatar.Controller == null)
+                return;
+
+            Vector2 origin;
+            try { origin = avatar.Controller.center; }
+            catch { origin = avatar.Controller.transform.position; }
+
+            RemoteShotTracer.Spawn(origin, new Vector2(pkt.AimX, pkt.AimY));
         }
 
         public static void Update()

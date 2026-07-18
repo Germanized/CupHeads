@@ -17,8 +17,21 @@ namespace CupheadOnline.Sync
     /// </summary>
     public static class RemotePlayer
     {
-        const int TargetBuffer = 2;
         const int MaxBuffer = 6;
+
+        /// <summary>
+        /// Jitter buffer depth scaled by measured ping: 1 snapshot on LAN-class
+        /// connections, up to 4 on 150 ms+ links, so remote movement stays smooth
+        /// on bad Wi-Fi without adding delay for everyone else.
+        /// </summary>
+        static int TargetBuffer
+        {
+            get
+            {
+                int latency = Plugin.Net != null ? Plugin.Net.Latency : 0;
+                return UnityEngine.Mathf.Clamp(1 + latency / 50, 1, 4);
+            }
+        }
 
         sealed class RemotePlayerSlotState
         {

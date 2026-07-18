@@ -44,6 +44,14 @@ namespace CupheadOnline
         static ConfigEntry<bool> _cfgBossHpScalingEnabled;
         static ConfigEntry<float> _cfgBossHpPerExtraPlayer;
         static ConfigEntry<int> _cfgPreferredPlayerColor;
+        static ConfigEntry<bool> _cfgEnableAutoReconnect;
+        static ConfigEntry<bool> _cfgEnableLevelReadyGate;
+        static ConfigEntry<bool> _cfgEnableDesyncSentinel;
+        static ConfigEntry<bool> _cfgEnableCommWheel;
+        static ConfigEntry<bool> _cfgEnableWinStatsCard;
+        static ConfigEntry<bool> _cfgEnableGhostDrift;
+        static ConfigEntry<bool> _cfgEnableRemoteShotTracers;
+        static ConfigEntry<string> _cfgEnemySyncExcludeNames;
 
         public static bool ShowConnectionHud => _cfgShowConnectionHud == null || _cfgShowConnectionHud.Value;
         public static bool VerboseLoggingEnabled => _cfgVerboseLogging != null && _cfgVerboseLogging.Value;
@@ -67,6 +75,16 @@ namespace CupheadOnline
             _cfgBossHpPerExtraPlayer == null ? 0.35f : Mathf.Max(0f, _cfgBossHpPerExtraPlayer.Value);
         public static int PreferredPlayerColorSelection =>
             _cfgPreferredPlayerColor == null ? PlayerColorSync.AutoSelection : PlayerColorSync.NormalizeSelection(_cfgPreferredPlayerColor.Value);
+        public static bool EnableAutoReconnect => _cfgEnableAutoReconnect == null || _cfgEnableAutoReconnect.Value;
+        public static bool EnableLevelReadyGate => _cfgEnableLevelReadyGate == null || _cfgEnableLevelReadyGate.Value;
+        public static bool EnableDesyncSentinel => _cfgEnableDesyncSentinel == null || _cfgEnableDesyncSentinel.Value;
+        public static bool EnableCommWheel => _cfgEnableCommWheel == null || _cfgEnableCommWheel.Value;
+        public static bool EnableWinStatsCard => _cfgEnableWinStatsCard == null || _cfgEnableWinStatsCard.Value;
+        public static bool EnableGhostDrift => _cfgEnableGhostDrift == null || _cfgEnableGhostDrift.Value;
+        public static bool EnableRemoteShotTracers => _cfgEnableRemoteShotTracers == null || _cfgEnableRemoteShotTracers.Value;
+        public static string EnemySyncExcludeNames =>
+            _cfgEnemySyncExcludeNames == null ? string.Empty : _cfgEnemySyncExcludeNames.Value;
+        public static int FailedPatchCount => _failedPatchNames.Count;
 
         // ──────────────────────────────────────────────────────────────────────
         //  Unity lifecycle
@@ -114,6 +132,22 @@ namespace CupheadOnline
                 "Extra boss HP added per extra active player. Example: 0.35 means 2 players = 1.35x HP.");
             _cfgPreferredPlayerColor = Config.Bind("Cosmetics", "PreferredPlayerColor", PlayerColorSync.AutoSelection,
                 "Lobby and in-game player color. 0 = Auto, 1 = Classic, 2+ = fixed tint.");
+            _cfgEnableAutoReconnect = Config.Bind("Networking", "EnableAutoReconnect", true,
+                "Automatically try to rejoin the last lobby (3 attempts) after an unexpected mid-run disconnect.");
+            _cfgEnableLevelReadyGate = Config.Bind("Networking", "EnableLevelReadyGate", true,
+                "Host briefly holds the level start until the guest's scene finishes loading (10s timeout).");
+            _cfgEnableDesyncSentinel = Config.Bind("Networking", "EnableDesyncSentinel", true,
+                "Exchange periodic state samples and auto-resync after repeated boss-HP/position mismatches.");
+            _cfgEnemySyncExcludeNames = Config.Bind("Networking", "EnemySyncExcludeNames", string.Empty,
+                "Comma-separated object-name substrings excluded from enemy state sync, for fights with nondeterministic spawn order.");
+            _cfgEnableCommWheel = Config.Bind("UI", "EnableCommWheel", true,
+                "Hold C then press 1-4 to send a canned message (WAIT / GO / REVIVE ME / SWELL WORK) to your partner.");
+            _cfgEnableWinStatsCard = Config.Bind("UI", "EnableWinStatsCard", true,
+                "Show a shared team results card (deaths/parries/retries for both players) on the knockout screen.");
+            _cfgEnableGhostDrift = Config.Bind("Gameplay", "EnableGhostDrift", true,
+                "Let a knocked-out player steer their revive ghost sideways with their movement axis.");
+            _cfgEnableRemoteShotTracers = Config.Bind("UI", "EnableRemoteShotTracers", true,
+                "Draw visual-only tracer streaks for the other player's shots on the non-simulating side.");
 
             // Networking manager — Steam P2P transport (lobby + invite flow)
             Net = new SteamNetManager();
@@ -213,6 +247,7 @@ namespace CupheadOnline
 
             // Movement / input sync
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerMotorPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PlanePlayerMotorPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(MapPlayerMotorPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(MapPlayerAnimationPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(RewiredPlayerGetAxisPatch));
@@ -223,8 +258,6 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputAxisPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputAxisIntPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonDownPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonUpPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(ParryPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(WeaponPrefabGetWeaponFallbackPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(AbstractEquipUICloseOnlinePatch));
@@ -245,6 +278,14 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(RandIntPatch));
 
             AuditPatchCoverage(registeredPatchTypes);
+
+            if (_failedPatchNames.Count > 0)
+            {
+                Log.LogError(
+                    "[Plugin] " + _failedPatchNames.Count + " patch(es) FAILED to apply: "
+                    + string.Join(", ", _failedPatchNames.ToArray())
+                    + " — multiplayer may misbehave. Check for a game update or a stale mod build.");
+            }
 
             Log.LogInfo("[Plugin] Patch pass complete.");
             SessionPausePanel.Ensure();
@@ -268,6 +309,11 @@ namespace CupheadOnline
             PatchSafe(harmony, patchType);
         }
 
+        static readonly List<string> _failedPatchNames = new List<string>();
+
+        public static string FailedPatchSummary =>
+            _failedPatchNames.Count == 0 ? "none" : string.Join(", ", _failedPatchNames.ToArray());
+
         static void PatchSafe(Harmony harmony, Type patchType)
         {
             try
@@ -277,6 +323,7 @@ namespace CupheadOnline
             }
             catch (Exception ex)
             {
+                _failedPatchNames.Add(patchType.Name);
                 Log.LogWarning("[Plugin] SKIP " + patchType.Name + ": " + ex.Message);
             }
         }
@@ -330,12 +377,21 @@ namespace CupheadOnline
             BossHealthBarOverlay.Tick();
             BattleAssistHud.Tick();
             SessionSync.Update();
+            LevelReadyGate.Update();
+            DesyncSentinel.Update();
+            RemoteShotTracer.Update();
+            GhostDriftController.Update();
+            CommWheel.Tick();
+            WinStatsCard.Tick();
+            PatchHealthNotice.Tick();
             SessionPausePanel.Ensure();
         }
 
         void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             UI.MultiplayerMenuInjector.ResetOnSceneChange();
+            LevelReadyGate.OnSceneChanged();
+            WinStatsCard.OnSceneLoaded(scene.name);
         }
 
         void OnDestroy()
@@ -392,6 +448,7 @@ namespace CupheadOnline
             string nl = Environment.NewLine;
             string report = "CupHeads Diagnostics" + nl
                           + "Version: " + PluginInfo.VERSION + nl
+                          + "Failed Patches: " + FailedPatchSummary + nl
                           + "HUD Enabled: " + ShowConnectionHud + nl
                           + "Verbose Logging: " + VerboseLoggingEnabled + nl
                           + "Auto Open Steam Friends: " + AutoOpenSteamFriends + nl
@@ -424,6 +481,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.2.24";
+        public const string VERSION = "1.4.0";
     }
 }

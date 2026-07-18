@@ -37,6 +37,7 @@ namespace CupheadOnline.Patches
         {
             ExtraParticipantReviveVisuals.OnEffectStarted(__instance);
             PlayerColorSync.ApplyDeathEffectTint(__instance);
+            GhostDriftController.Register(__instance);
         }
     }
 

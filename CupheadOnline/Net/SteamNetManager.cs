@@ -103,6 +103,12 @@ namespace CupheadOnline.Net
             CSteamID localId = SteamUser.GetSteamID();
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("LOBBY #" + _lobbyId.m_SteamID);
+            if (_state == NetState.Connected)
+            {
+                sb.AppendLine(Latency > 0 ? "PING " + Latency + "ms" : "PING measuring...");
+                if (SessionSync.HasTrackedSave)
+                    sb.AppendLine("SAVE SYNCED - READY TO START");
+            }
             for (int i = 0; i < n; i++)
             {
                 CSteamID member = SteamMatchmaking.GetLobbyMemberByIndex(_lobbyId, i);
@@ -444,6 +450,13 @@ namespace CupheadOnline.Net
         const string LOBBY_KEY_PARTICIPANT_PREFIX = "participant_";
         const string LOBBY_MEMBER_KEY_COLOR = "preferred_color";
 
+        // ── Auto-reconnect (client side) ──────────────────────────────────────
+        const int   AUTO_RECONNECT_ATTEMPTS = 3;
+        const float AUTO_RECONNECT_DELAY    = 3f;
+        int   _autoReconnectAttemptsLeft;
+        float _nextAutoReconnectAt;
+        bool  _autoReconnectSuppressed;   // set when the peer refused us (version mismatch)
+
         float    _stateEnteredTime;            // Time.realtimeSinceStartup at state change
         DateTime _lastReceive  = DateTime.UtcNow;
         float    _nextPingTime;
@@ -659,7 +672,7 @@ namespace CupheadOnline.Net
                 _peerId = sender;
 
             UpdateHostPeerStage(sender, HostPeerStage.WaitingReady);
-            RawSendTo(sender, new[] { (byte)PacketType.Welcome }, reliable: true);
+            RawSendTo(sender, BuildHandshakePayload(PacketType.Welcome), reliable: true);
             if (sender == _peerId && _state != NetState.Connected)
                 SetState(NetState.WaitingReady, "Almost there\u2026");
             else if (_state == NetState.Connected)
@@ -749,11 +762,20 @@ namespace CupheadOnline.Net
                          (uint)EChatMemberStateChange.k_EChatMemberStateChangeLeft) != 0
                      || (cb.m_rgfChatMemberStateChange &
                          (uint)EChatMemberStateChange.k_EChatMemberStateChangeDisconnected) != 0;
+            bool entered = (cb.m_rgfChatMemberStateChange &
+                            (uint)EChatMemberStateChange.k_EChatMemberStateChangeEntered) != 0;
             var changed = new CSteamID(cb.m_ulSteamIDUserChanged);
             MainThreadQueue.Enqueue(() =>
             {
                 if (_isHost)
                     RefreshHostLobbyRoster();
+
+                if (entered && changed != SteamUser.GetSteamID())
+                {
+                    string joinedName = FriendName(changed);
+                    Plugin.Log.LogInfo("[SteamNet] " + joinedName + " joined the lobby.");
+                    ConnectionHUD.Show(joinedName + " joined the lobby!");
+                }
 
                 if (!left)
                     return;
@@ -772,6 +794,32 @@ namespace CupheadOnline.Net
         {
             if (cb.m_bActive != 0) return;   // 0 = overlay closed
             MainThreadQueue.Enqueue(() => OnOverlayClosed?.Invoke());
+        }
+
+        /// <summary>
+        /// Host-side: drop a peer whose build cannot play with ours, without
+        /// tearing down the lobby — the slot reopens for a compatible player.
+        /// </summary>
+        void RejectIncompatiblePeer(CSteamID peer, string reason)
+        {
+            if (peer == CSteamID.Nil)
+                return;
+
+            try { SteamNetworking.CloseP2PSessionWithUser(peer); } catch { }
+            RemoveHostPeer(peer);
+
+            if (peer == _peerId)
+            {
+                _peerId = CSteamID.Nil;
+                UpdateLobbyActivePeerData();
+                if (_lobbyId != CSteamID.Nil)
+                {
+                    SetState(NetState.WaitingInLobby,
+                        reason + "\n\nWaiting for a compatible player...");
+                }
+            }
+
+            ConnectionHUD.Show(reason);
         }
 
         void HandleDisconnect(string reason)
@@ -827,8 +875,26 @@ namespace CupheadOnline.Net
             }
             else
             {
-                SetState(NetState.Error,
-                    friendlyReason + "\n\nUse Retry Last or Join Game to try again.");
+                // Client: arm auto-reconnect for unexpected drops of a live run.
+                bool canAutoReconnect = Plugin.EnableAutoReconnect
+                    && wasConnected
+                    && !_autoReconnectSuppressed
+                    && _lastRetryIntent == RetryIntent.JoinLobby
+                    && _lastRetryLobbyId != CSteamID.Nil;
+
+                if (canAutoReconnect)
+                {
+                    _autoReconnectAttemptsLeft = AUTO_RECONNECT_ATTEMPTS;
+                    _nextAutoReconnectAt = Time.realtimeSinceStartup + AUTO_RECONNECT_DELAY;
+                    SetState(NetState.Error,
+                        friendlyReason + "\n\nReconnecting automatically...");
+                }
+                else
+                {
+                    SetState(NetState.Error,
+                        friendlyReason + "\n\nUse Retry Last or Join Game to try again.");
+                }
+
                 if (wasConnected) ConnectionHUD.ShowDisconnected(friendlyReason);
             }
         }
@@ -848,6 +914,28 @@ namespace CupheadOnline.Net
             {
                 HandleSteamRuntimeFailure("polling", ex);
                 return;
+            }
+
+            // Auto-reconnect runs from the Error state, so check before bailing.
+            if (_state == NetState.Error
+             && _autoReconnectAttemptsLeft > 0
+             && !_autoReconnectSuppressed
+             && Time.realtimeSinceStartup >= _nextAutoReconnectAt)
+            {
+                int attempt = AUTO_RECONNECT_ATTEMPTS - _autoReconnectAttemptsLeft + 1;
+                _autoReconnectAttemptsLeft--;
+                _nextAutoReconnectAt = Time.realtimeSinceStartup + AUTO_RECONNECT_DELAY + LOBBY_TIMEOUT;
+                var lobby = _lastRetryLobbyId;
+                Plugin.Log.LogInfo("[SteamNet] Auto-reconnect attempt " + attempt + "/" + AUTO_RECONNECT_ATTEMPTS + "...");
+                ConnectionHUD.Show("Reconnecting... attempt " + attempt + "/" + AUTO_RECONNECT_ATTEMPTS);
+                int remainingAttempts = _autoReconnectAttemptsLeft;
+                if (JoinLobby(lobby))
+                {
+                    // JoinLobby resets state; restore the remaining attempt budget
+                    // so a failed rejoin can try again.
+                    _autoReconnectAttemptsLeft = remainingAttempts;
+                    _nextAutoReconnectAt = Time.realtimeSinceStartup + AUTO_RECONNECT_DELAY + LOBBY_TIMEOUT;
+                }
             }
 
             if (_state == NetState.Idle || _state == NetState.Error) return;
@@ -1172,18 +1260,66 @@ namespace CupheadOnline.Net
             // ── Handshake ─────────────────────────────────────────────────────
             if (type == (byte)PacketType.Hello)
             {
-                if (_isHost)
-                    OnHelloReceived(sender);
+                if (!_isHost)
+                    return;
+
+                string peerVersion;
+                string failReason;
+                if (!TryValidateHandshake(buf, length, out peerVersion, out failReason))
+                {
+                    Plugin.Log.LogWarning("[SteamNet] Rejected " + FriendName(sender)
+                        + " (v" + peerVersion + "): " + failReason);
+                    SendVersionRejectTo(sender, failReason);
+                    RejectIncompatiblePeer(sender, failReason);
+                    return;
+                }
+
+                OnHelloReceived(sender);
                 return;
             }
             if (type == (byte)PacketType.Welcome)
             {
-                if (!_isHost && _state == NetState.WaitingWelcome) OnWelcomeReceived();
+                if (_isHost || _state != NetState.WaitingWelcome)
+                    return;
+
+                string peerVersion;
+                string failReason;
+                if (!TryValidateHandshake(buf, length, out peerVersion, out failReason))
+                {
+                    Plugin.Log.LogWarning("[SteamNet] Host build incompatible (v" + peerVersion + "): " + failReason);
+                    _autoReconnectSuppressed = true;
+                    HandleDisconnect(failReason);
+                    return;
+                }
+
+                OnWelcomeReceived();
                 return;
             }
             if (type == (byte)PacketType.Ready)
             {
                 if (_isHost) OnReadyReceived(sender);
+                return;
+            }
+            if (type == (byte)PacketType.VersionReject)
+            {
+                var reject = new VersionRejectPacket();
+                try
+                {
+                    using (var ms = new MemoryStream(buf, 1, length - 1, false))
+                    using (var r = new BinaryReader(ms))
+                        reject.Read(r);
+                }
+                catch
+                {
+                    reject.Reason = "The other player's build refused the connection.";
+                }
+
+                string reason = string.IsNullOrEmpty(reject.Reason)
+                    ? "Version mismatch with the other player."
+                    : reject.Reason;
+                Plugin.Log.LogWarning("[SteamNet] Connection refused by peer (v" + reject.Version + "): " + reason);
+                _autoReconnectSuppressed = true;
+                HandleDisconnect(reason);
                 return;
             }
 
@@ -1330,6 +1466,10 @@ namespace CupheadOnline.Net
             SendToPeer(PacketType.ReviveGrant, ref pkt, true, targetPeer);
             return true;
         }
+        public void SendSceneReady  (ref SceneReadyPacket   p) => Send(PacketType.SceneReady,   ref p, true);
+        public void SendCommMessage (ref CommMessagePacket  p) => Send(PacketType.CommMessage,  ref p, true);
+        public void SendStatsReport (ref StatsReportPacket  p) => Send(PacketType.StatsReport,  ref p, true);
+        public void SendStateHash   (ref StateHashPacket    p) => Send(PacketType.StateHash,    ref p, false);
         public void SendSceneChange (ref SceneChangePacket  p) => Send(PacketType.SceneChange,  ref p, true);
         public void SendMenuSceneChange(ref MenuSceneChangePacket p) => Send(PacketType.MenuSceneChange, ref p, true);
         public void SendSaveSlotSync(ref SaveSlotSyncPacket p) => Send(PacketType.SaveSlotSync, ref p, true);
@@ -1421,6 +1561,8 @@ namespace CupheadOnline.Net
             _isHost          = false;
             Latency          = 0;
             _state           = NetState.Idle;
+            _autoReconnectAttemptsLeft = 0;
+            _autoReconnectSuppressed = false;
             _hostPeers.Clear();
             _peerSessionParticipantIds.Clear();
             _nextSessionParticipantId = 2;
@@ -1481,9 +1623,89 @@ namespace CupheadOnline.Net
             }
 
             SetState(NetState.WaitingWelcome, "Connecting to " + FriendName(_peerId) + "...");
-            RawSendTo(_peerId, new[] { (byte)PacketType.Hello }, reliable: true);
-            Plugin.Log.LogInfo("[SteamNet] Hello sent to " + FriendName(_peerId));
+            RawSendTo(_peerId, BuildHandshakePayload(PacketType.Hello), reliable: true);
+            Plugin.Log.LogInfo("[SteamNet] Hello sent to " + FriendName(_peerId)
+                + " (v" + PluginInfo.VERSION + " proto " + NetProtocol.PROTOCOL + ")");
             return true;
+        }
+
+        /// <summary>[type, protocol, version-string] — both handshake messages carry build identity.</summary>
+        byte[] BuildHandshakePayload(PacketType type)
+        {
+            _sendBuf.SetLength(0);
+            _sendBuf.Position = 0;
+            _sendWriter.Write((byte)type);
+            _sendWriter.Write(NetProtocol.PROTOCOL);
+            _sendWriter.Write(PluginInfo.VERSION);
+            _sendWriter.Flush();
+            int len = (int)_sendBuf.Length;
+            var data = new byte[len];
+            Buffer.BlockCopy(_sendBuf.GetBuffer(), 0, data, 0, len);
+            return data;
+        }
+
+        /// <summary>
+        /// Validates the peer's handshake identity. Returns false (and reports a
+        /// human-readable reason) when the builds cannot play together.
+        /// </summary>
+        static bool TryValidateHandshake(byte[] buf, int length, out string peerVersion, out string failReason)
+        {
+            peerVersion = "unknown (pre-1.4.0)";
+            failReason = string.Empty;
+
+            if (length < 2)
+            {
+                failReason = "They are running an older CupHeads build. Both players need v" + PluginInfo.VERSION + ".";
+                return false;
+            }
+
+            byte peerProtocol;
+            try
+            {
+                using (var ms = new MemoryStream(buf, 1, length - 1, false))
+                using (var r = new BinaryReader(ms))
+                {
+                    peerProtocol = r.ReadByte();
+                    peerVersion = r.ReadString();
+                }
+            }
+            catch
+            {
+                failReason = "Their CupHeads build sent a malformed handshake. Update both players to v" + PluginInfo.VERSION + ".";
+                return false;
+            }
+
+            if (peerProtocol != NetProtocol.PROTOCOL)
+            {
+                failReason = "Version mismatch: you have v" + PluginInfo.VERSION
+                    + ", they have v" + peerVersion + ". Both players need the same build.";
+                return false;
+            }
+
+            return true;
+        }
+
+        void SendVersionRejectTo(CSteamID target, string reason)
+        {
+            if (target == CSteamID.Nil)
+                return;
+
+            var pkt = new VersionRejectPacket
+            {
+                Protocol = NetProtocol.PROTOCOL,
+                Version = PluginInfo.VERSION,
+                Reason = reason,
+            };
+
+            _sendBuf.SetLength(0);
+            _sendBuf.Position = 0;
+            _sendWriter.Write((byte)PacketType.VersionReject);
+            pkt.Write(_sendWriter);
+            _sendWriter.Flush();
+            int len = (int)_sendBuf.Length;
+            var data = new byte[len];
+            Buffer.BlockCopy(_sendBuf.GetBuffer(), 0, data, 0, len);
+            RawSendTo(target, data, reliable: true);
         }
 
         string BuildWaitingForOpenSlotStatus(ulong activePeerValue)

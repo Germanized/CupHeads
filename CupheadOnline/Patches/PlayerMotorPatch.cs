@@ -148,13 +148,13 @@ namespace CupheadOnline.Patches
                 t.Property("MoveDirection").SetValue(new Trilean2(0, 0));
             }
 
+            // Only Grounded / Locked / GravityReversed have setters. Dashing,
+            // Ducking, IsHit, and IsUsingSuperOrEx are computed getters backed by
+            // the motor's internal managers; their visual effect on the proxy is
+            // driven through the flag-transition events below instead.
             t.Property("Grounded").SetValue(s.Grounded);
-            t.Property("Dashing").SetValue(s.Dashing);
-            t.Property("Ducking").SetValue(s.Ducking);
             t.Property("Locked").SetValue(false);
             t.Property("GravityReversed").SetValue(s.GravReversed);
-            t.Property("IsHit").SetValue(s.IsHit);
-            t.Property("IsUsingSuperOrEx").SetValue(s.IsSuper);
 
             RemotePlayer.UpdateStateTransitions(participantId, motor, s);
         }
@@ -247,33 +247,7 @@ namespace CupheadOnline.Patches
         }
     }
 
-    [HarmonyPatch(typeof(PlayerInput), "GetButtonDown")]
-    public static class PlayerInputButtonDownPatch
-    {
-        static bool Prefix(PlayerInput __instance, CupheadButton button, ref bool __result)
-        {
-            if (!MultiplayerSession.IsActive)
-                return true;
-            if (!MultiplayerSession.IsNetworkControlledPlayer(__instance.playerId))
-                return true;
-
-            __result = RemoteInputDriver.WasPressedThisFrame((byte)__instance.playerId, button);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(PlayerInput), "GetButtonUp")]
-    public static class PlayerInputButtonUpPatch
-    {
-        static bool Prefix(PlayerInput __instance, CupheadButton button, ref bool __result)
-        {
-            if (!MultiplayerSession.IsActive)
-                return true;
-            if (!MultiplayerSession.IsNetworkControlledPlayer(__instance.playerId))
-                return true;
-
-            __result = RemoteInputDriver.WasReleasedThisFrame((byte)__instance.playerId, button);
-            return false;
-        }
-    }
+    // NOTE: Cuphead's PlayerInput has no GetButtonDown / GetButtonUp methods —
+    // edge queries go through Rewired.Player and are covered by the
+    // RewiredPlayerGetButtonDown/Up patches in InputRouterPatches.
 }

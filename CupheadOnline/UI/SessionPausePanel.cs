@@ -50,14 +50,14 @@ namespace CupheadOnline.UI
             rt.sizeDelta = new Vector2(420f, 236f);
 
             _bg = panel.AddComponent<Image>();
-            _bg.color = new Color(0.05f, 0.03f, 0.02f, 0.90f);
+            CupheadUiTheme.StyleCard(_bg, dark: true);
 
             _canvasGroup = panel.AddComponent<CanvasGroup>();
             _canvasGroup.alpha = 0f;
             _canvasGroup.interactable = false;
             _canvasGroup.blocksRaycasts = false;
 
-            _title = MakeText(panel, "SESSION PANEL", 17, TitleColour, new Vector2(0f, 86f), new Vector2(380f, 24f), TextAnchor.MiddleCenter);
+            _title = MakeText(panel, "~ SESSION ~", 18, CupheadUiTheme.Gold, new Vector2(0f, 86f), new Vector2(380f, 24f), TextAnchor.MiddleCenter);
             _body = MakeText(panel, string.Empty, 12, BodyColour, new Vector2(0f, -4f), new Vector2(380f, 156f), TextAnchor.UpperLeft);
             _body.horizontalOverflow = HorizontalWrapMode.Wrap;
             _body.verticalOverflow = VerticalWrapMode.Overflow;
@@ -68,6 +68,8 @@ namespace CupheadOnline.UI
 
         private void Update()
         {
+            CupheadUiTheme.RefreshLabelFonts(gameObject);
+
             if (Input.GetKeyDown(KeyCode.F8))
                 _manualVisible = !_manualVisible;
 
@@ -105,21 +107,9 @@ namespace CupheadOnline.UI
 
         private static Text MakeText(GameObject parent, string content, int size, Color color, Vector2 offset, Vector2 sizeDelta, TextAnchor anchor)
         {
-            var go = new GameObject("Text_" + content);
-            go.transform.SetParent(parent.transform, false);
-
-            var rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.anchoredPosition = offset;
-            rt.sizeDelta = sizeDelta;
-
-            var text = go.AddComponent<Text>();
-            text.text = content;
-            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            text.fontSize = size;
-            text.color = color;
-            text.alignment = anchor;
-            return text;
+            return CupheadUiTheme.MakeLabel(
+                parent, content, size, color, offset, sizeDelta,
+                anchor, new Vector2(0.5f, 0.5f));
         }
     }
 }

@@ -24,9 +24,9 @@ namespace CupheadOnline.Patches
             // Only subscribe for our LOCAL player — we broadcast their actions
             if (!MultiplayerSession.IsLocalPlayer(player.id)) return;
 
-            wm.OnWeaponFire      += () => BroadcastShot(player, 0);
-            wm.OnExStart         += () => BroadcastShot(player, 1);
-            wm.OnSuperStart      += () => BroadcastShot(player, 2);
+            wm.OnWeaponFire      += () => BroadcastShot(player, (byte)WeaponEventType.Fire);
+            wm.OnExStart         += () => BroadcastShot(player, (byte)WeaponEventType.Ex);
+            wm.OnSuperStart      += () => BroadcastShot(player, (byte)WeaponEventType.Super);
             wm.OnWeaponChangeEvent += (next) => BroadcastWeaponSwitch(player, next);
         }
 
@@ -55,7 +55,7 @@ namespace CupheadOnline.Patches
             var pkt = new WeaponEventPacket
             {
                 PlayerId  = (byte)player.id,
-                EventType = 4, // switch
+                EventType = (byte)WeaponEventType.Switch,
                 AimX      = (sbyte)(motor?.LookDirection.x.Value ?? 1),
                 AimY      = 0,
                 WeaponId  = LoadoutCodec.EncodeWeapon(next),
@@ -67,8 +67,10 @@ namespace CupheadOnline.Patches
 
     /// <summary>
     /// Patch the parry controller to broadcast parry events.
+    /// StartParry is the game's entry point when a parry begins; there is no
+    /// method named "Parry" on LevelPlayerParryController.
     /// </summary>
-    [HarmonyPatch(typeof(LevelPlayerParryController), "Parry")]
+    [HarmonyPatch(typeof(LevelPlayerParryController), "StartParry")]
     public static class ParryPatch
     {
         static void Postfix(LevelPlayerParryController __instance)
@@ -82,7 +84,7 @@ namespace CupheadOnline.Patches
             var pkt = new WeaponEventPacket
             {
                 PlayerId  = (byte)player.id,
-                EventType = 3, // parry
+                EventType = (byte)WeaponEventType.Parry,
                 AimX      = (sbyte)(motor?.LookDirection.x.Value ?? 1),
                 AimY      = (sbyte)(motor?.LookDirection.y.Value ?? 0),
                 WeaponId  = 0,

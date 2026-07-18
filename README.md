@@ -9,6 +9,13 @@ This repository is intended to provide the source code, build scripts, documenta
 * `CupheadOnline/` - the BepInEx + Harmony mod source
 * `CupheadInstaller/` - the Electron installer application source
 * `build.ps1` - root build script for producing local build artifacts
+* `tools/audit-hooks.ps1` - Harmony hook audit that verifies every patch target against the game code
+
+## Version compatibility
+
+Both players must run the same CupHeads version.
+
+Since v1.4.0 the connection handshake carries the mod version and a wire-protocol number. If the builds do not match, the connection is refused with a clear message telling both players which versions they have, instead of silently desyncing. Older pre-1.4.0 builds are detected and refused the same way.
 
 ## Features
 
@@ -24,6 +31,14 @@ This repository is intended to provide the source code, build scripts, documenta
 * Universal input routing for keyboard and controller during active sessions
 * Safer remote button-edge handling for jump, dash, confirm, cancel, and menu actions
 * Hybrid co-op authority where the host owns world state while each player can own damage to their own body
+* Deterministic cross-machine enemy addressing so boss and enemy state sync matches between both PCs
+* Boss health synchronised through the game's own damage path, keeping phase changes and the knockout in step
+* Level-entry ready gate: the host briefly holds the fight until the guest's scene finishes loading, with a fail-open timeout
+* Automatic reconnect after an unexpected mid-run disconnect, with session state restored from the host's recovery bundle
+* Desync sentinel that samples boss HP and player positions, then auto-corrects and resyncs after repeated mismatches
+* Plane (shmup) levels use the same host-simulated proxy sync model as run-and-gun levels
+* Ping-adaptive jitter buffering for smooth remote movement on slower connections
+* Visual-only tracer streaks so the other player's shots stay readable without double-counting damage
 * Remote menu input routing for overworld prompts, equip cards, and shop-style menus
 * Defensive stale-packet guards for save selection, host snapshots, weapon events, revive grants, damage events, scene loads, and status updates
 * Save compatibility checks for mismatched progress, DLC state, or setup
@@ -41,6 +56,7 @@ This repository is intended to provide the source code, build scripts, documenta
   * `F9` copy diagnostics
   * `F10` Battle Assist HUD
   * `F11` Dev Lab
+  * Hold `C` then `1`-`4` for the comm wheel (WAIT / GO / REVIVE ME / SWELL WORK)
 * Local Dev Lab for same-PC simulation of the remote-input path
 * Optional startup splash video with audio, skip support, and configurable film-static overlay
 * Optional boss HP scaling per extra active player, disabled by default
@@ -48,6 +64,12 @@ This repository is intended to provide the source code, build scripts, documenta
 
 ### Menu and UX
 
+* Shared vintage UI theme: every overlay uses Cuphead's own menu fonts (resolved from the game at runtime) on 1930s-style card panels with a rounded double ink rule and gold accents
+* Comm wheel with four canned messages that pop as themed toasts on both screens
+* Team results card on the knockout screen with both players' deaths, parries, and retries
+* Lets a knocked-out player steer their revive ghost sideways while waiting for a parry-revive
+* Lobby roster shows live ping and a save-synced indicator, and a toast announces when someone joins
+* In-game mod health warning on menu scenes if any Harmony hook failed to apply
 * Lobby-style multiplayer screen injected into Slot Select
 * Cleaner roster, status, and action layout
 * Steam readiness shown in-menu
@@ -94,6 +116,14 @@ CupHeads adds online co-op support and experimental extra-participant support, b
 ```powershell
 dotnet build .\CupheadOnline\CupheadOnline.csproj -c Release
 ```
+
+### Audit the Harmony hooks
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\audit-hooks.ps1
+```
+
+This verifies every Harmony patch target and reflected member name in the mod source against the decompiled game code, and fails if any hook no longer exists. `build.ps1` runs it automatically before building, so a game update or a typo breaks the build instead of shipping a silently half-working mod.
 
 ### Build the full local package
 
