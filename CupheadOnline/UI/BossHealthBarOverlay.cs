@@ -159,7 +159,10 @@ namespace CupheadOnline.UI
 
             Ensure();
             if (Instance != null)
+            {
+                CupheadUiTheme.RefreshLabelFonts(Instance.gameObject);
                 Instance.Refresh();
+            }
         }
 
         public static void Reset()
@@ -337,12 +340,16 @@ namespace CupheadOnline.UI
 
             var text = go.AddComponent<Text>();
             text.text = content;
-            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            text.font = CupheadUiTheme.MenuFont;
             text.fontSize = size;
             text.color = color;
             text.alignment = anchor;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Truncate;
+
+            var shadow = go.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.55f);
+            shadow.effectDistance = new Vector2(1f, -1f);
             return text;
         }
 

@@ -112,5 +112,12 @@ namespace CupheadOnline.Patches
         {
             MultiplayerSession.EnsureCupheadMultiplayerState();
         }
+
+        static void Postfix()
+        {
+            // Guest reports the level loaded; host holds the intro until the
+            // guest's report arrives (or a timeout passes).
+            LevelReadyGate.OnLevelStarted();
+        }
     }
 }

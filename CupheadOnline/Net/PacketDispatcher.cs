@@ -213,10 +213,45 @@ namespace CupheadOnline.Net
                     break;
                 }
 
+                case PacketType.SceneReady:
+                {
+                    if (!MultiplayerSession.IsHost) break;
+                    var pkt = new SceneReadyPacket();
+                    pkt.Read(r);
+                    LevelReadyGate.OnGuestSceneReady(pkt);
+                    break;
+                }
+
+                case PacketType.CommMessage:
+                {
+                    var pkt = new CommMessagePacket();
+                    pkt.Read(r);
+                    CommWheel.OnReceived(pkt);
+                    break;
+                }
+
+                case PacketType.StatsReport:
+                {
+                    var pkt = new StatsReportPacket();
+                    pkt.Read(r);
+                    WinStatsCard.OnRemoteStats(pkt);
+                    break;
+                }
+
+                case PacketType.StateHash:
+                {
+                    if (MultiplayerSession.IsHost) break;
+                    var pkt = new StateHashPacket();
+                    pkt.Read(r);
+                    DesyncSentinel.OnHostSample(pkt);
+                    break;
+                }
+
                 // Handshake packets are consumed by SteamNetManager before reaching here
                 case PacketType.Hello:
                 case PacketType.Welcome:
                 case PacketType.Ready:
+                case PacketType.VersionReject:
                 case PacketType.Ping:
                 case PacketType.Pong:
                 case PacketType.ReviveRequest:

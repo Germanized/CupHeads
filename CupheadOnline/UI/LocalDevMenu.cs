@@ -148,16 +148,7 @@ namespace CupheadOnline.UI
             panelRt.pivot = new Vector2(0.5f, 0.5f);
             panelRt.anchoredPosition = Vector2.zero;
             panelRt.sizeDelta = new Vector2(900f, 620f);
-            panel.AddComponent<Image>().color = PanelColour;
-
-            var border = new GameObject("Border");
-            border.transform.SetParent(panel.transform, false);
-            var borderRt = border.AddComponent<RectTransform>();
-            borderRt.anchorMin = Vector2.zero;
-            borderRt.anchorMax = Vector2.one;
-            borderRt.offsetMin = new Vector2(4f, 4f);
-            borderRt.offsetMax = new Vector2(-4f, -4f);
-            border.AddComponent<Image>().color = BorderColour;
+            CupheadUiTheme.StyleCard(panel.AddComponent<Image>(), dark: true);
 
             _group = gameObject.AddComponent<CanvasGroup>();
             _group.alpha = 0f;
@@ -201,7 +192,8 @@ namespace CupheadOnline.UI
             rt.sizeDelta = index == CloseIndex ? new Vector2(320f, 46f) : new Vector2(400f, 46f);
 
             var image = go.AddComponent<Image>();
-            image.color = new Color(0.16f, 0.11f, 0.055f, 0.92f);
+            CupheadUiTheme.StyleCard(image, dark: true);
+            image.color = new Color(0.72f, 0.68f, 0.60f, 0.95f);
             _buttonBackgrounds[index] = image;
 
             var button = go.AddComponent<Button>();
@@ -236,6 +228,8 @@ namespace CupheadOnline.UI
 
         void RefreshUi()
         {
+            CupheadUiTheme.RefreshLabelFonts(gameObject);
+
             bool enabled = Plugin.EnableLocalDevSession;
             bool connected = Plugin.Net != null && Plugin.Net.IsConnected;
             bool active = LocalDevSession.IsActive;
@@ -348,12 +342,14 @@ namespace CupheadOnline.UI
                 bool selected = i == _selection && enabled;
                 if (_buttonLabels[i] != null)
                     _buttonLabels[i].color = enabled ? (selected ? TitleColour : BodyColour) : DisabledColour;
+                // Tints over the shared card sprite: bright gold when selected,
+                // neutral when idle, faded when disabled.
                 if (_buttonBackgrounds[i] != null)
                     _buttonBackgrounds[i].color = selected
-                        ? new Color(0.30f, 0.20f, 0.08f, 0.98f)
+                        ? new Color(1f, 0.92f, 0.66f, 1f)
                         : enabled
-                            ? new Color(0.16f, 0.11f, 0.055f, 0.92f)
-                            : new Color(0.08f, 0.07f, 0.055f, 0.72f);
+                            ? new Color(0.72f, 0.68f, 0.60f, 0.95f)
+                            : new Color(0.42f, 0.40f, 0.36f, 0.70f);
             }
         }
 
@@ -415,22 +411,9 @@ namespace CupheadOnline.UI
 
         static Text MakeText(GameObject parent, string content, int size, Color color, Vector2 offset, Vector2 sizeDelta, TextAnchor anchor)
         {
-            var go = new GameObject("Text_" + content);
-            go.transform.SetParent(parent.transform, false);
-
-            var rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.anchoredPosition = offset;
-            rt.sizeDelta = sizeDelta;
-
-            var text = go.AddComponent<Text>();
-            text.text = content;
-            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            text.fontSize = size;
-            text.color = color;
-            text.alignment = anchor;
-            return text;
+            return CupheadUiTheme.MakeLabel(
+                parent, content, size, color, offset, sizeDelta,
+                anchor, new Vector2(0.5f, 0.5f));
         }
 
         static void EnsureEventSystem()

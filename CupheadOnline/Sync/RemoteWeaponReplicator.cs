@@ -66,29 +66,45 @@ namespace CupheadOnline.Sync
             var wm = player.weaponManager;
             if (wm == null) return;
 
-            switch (pkt.EventType)
+            switch ((WeaponEventType)pkt.EventType)
             {
-                case 0: // Basic shot
-                    // Raise the OnWeaponFire event so the animation controller plays the fire anim
+                case WeaponEventType.Fire:
+                    // Raise the fire anim + a visual-only tracer so the shot is readable
                     TriggerAnimatorParam(player, "Shooting", true);
+                    SpawnTracer(player, pkt);
                     break;
 
-                case 1: // EX
+                case WeaponEventType.Ex:
                     TriggerAnimatorTrigger(player, "Ex");
+                    SpawnTracer(player, pkt);
                     break;
 
-                case 2: // Super
+                case WeaponEventType.Super:
                     TriggerAnimatorTrigger(player, "Super");
                     break;
 
-                case 3: // Parry
+                case WeaponEventType.Parry:
                     TriggerAnimatorTrigger(player, "Parry");
                     break;
 
-                case 4: // Weapon switch — update active weapon on remote manager
+                case WeaponEventType.Switch:
                     ApplyWeaponSwitch(wm, pkt.WeaponId);
                     break;
             }
+        }
+
+        static void SpawnTracer(LevelPlayerController player, WeaponEventPacket pkt)
+        {
+            // Only where real projectiles are missing: the proxy slot on the
+            // client. The host simulates the guest's weapons for real.
+            if (MultiplayerSession.IsHost)
+                return;
+
+            Vector2 origin;
+            try { origin = player.center; }
+            catch { origin = player.transform.position; }
+
+            RemoteShotTracer.Spawn(origin, new Vector2(pkt.AimX, pkt.AimY));
         }
 
         static void TriggerAnimatorParam(LevelPlayerController player, string param, bool value)

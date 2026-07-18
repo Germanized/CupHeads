@@ -646,14 +646,10 @@ namespace CupheadOnline.Patches
             rt.anchoredPosition = pos;
             rt.sizeDelta = size;
 
+            // Shared vintage card: fill/outline args are kept for call-site
+            // compatibility, but the double-ruled card sprite carries the look.
             var image = go.AddComponent<Image>();
-            image.sprite = GetWhiteSprite();
-            image.type = Image.Type.Simple;
-            image.color = fill;
-
-            var outline = go.AddComponent<Outline>();
-            outline.effectColor = outlineColor;
-            outline.effectDistance = new Vector2(2f, -2f);
+            CupheadUiTheme.StyleCard(image, dark: true);
 
             var shadow = go.AddComponent<Shadow>();
             shadow.effectColor = new Color(0f, 0f, 0f, 0.18f);

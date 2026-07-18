@@ -17,9 +17,11 @@ namespace CupheadOnline.UI
         private static readonly Color DisconnectedColour = new Color(0.90f, 0.20f, 0.15f, 1f);
         private static readonly Color TextColour         = new Color(0.96f, 0.91f, 0.77f, 1f);
         private static readonly Color MetaColour         = new Color(0.82f, 0.78f, 0.66f, 0.95f);
-        private static readonly Color BgGoodColour       = new Color(0.05f, 0.03f, 0.02f, 0.82f);
-        private static readonly Color BgOkayColour       = new Color(0.18f, 0.12f, 0.03f, 0.86f);
-        private static readonly Color BgPoorColour       = new Color(0.28f, 0.09f, 0.02f, 0.88f);
+        // Card tint per connection quality — the card sprite carries the real
+        // colours, so these stay close to white and only warm/redden the panel.
+        private static readonly Color BgGoodColour       = Color.white;
+        private static readonly Color BgOkayColour       = new Color(1f, 0.93f, 0.80f, 1f);
+        private static readonly Color BgPoorColour       = new Color(1f, 0.76f, 0.66f, 1f);
 
         private Text _titleLabel;
         private Text _pingLabel;
@@ -113,9 +115,9 @@ namespace CupheadOnline.UI
             bgRT.anchoredPosition = new Vector2(-12f, -12f);
             bgRT.sizeDelta = new Vector2(292f, 128f);
             _bgImage = bg.AddComponent<Image>();
-            _bgImage.color = BgGoodColour;
+            CupheadUiTheme.StyleCard(_bgImage, dark: true);
 
-            _titleLabel = MakeLabel(bg, "CUPHEAD ONLINE", 13, OkayColour, new Vector2(0f, 40f), new Vector2(270f, 20f));
+            _titleLabel = MakeLabel(bg, "CUPHEADS", 15, CupheadUiTheme.Gold, new Vector2(0f, 40f), new Vector2(270f, 20f));
             _pingLabel = MakeLabel(bg, "PING ---", 13, OkayColour, new Vector2(0f, 20f), new Vector2(270f, 20f));
 
             _statusLabel = MakeLabel(bg, "Waiting for peer...", 10, TextColour, new Vector2(0f, -4f), new Vector2(270f, 24f));
@@ -131,6 +133,7 @@ namespace CupheadOnline.UI
 
         void Update()
         {
+            CupheadUiTheme.RefreshLabelFonts(gameObject);
             RefreshMeta();
         }
 
@@ -149,8 +152,8 @@ namespace CupheadOnline.UI
 
             if (_titleLabel != null)
             {
-                _titleLabel.text = "CUPHEAD ONLINE";
-                _titleLabel.color = OkayColour;
+                _titleLabel.text = "CUPHEADS";
+                _titleLabel.color = CupheadUiTheme.Gold;
             }
 
             if (_pingLabel != null && string.IsNullOrEmpty(_pingLabel.text))
@@ -219,7 +222,7 @@ namespace CupheadOnline.UI
 
             if (_titleLabel != null)
             {
-                _titleLabel.text = "CUPHEAD ONLINE";
+                _titleLabel.text = "CUPHEADS";
                 _titleLabel.color = DisconnectedColour;
             }
 
@@ -236,7 +239,7 @@ namespace CupheadOnline.UI
             }
 
             if (_bgImage != null)
-                _bgImage.color = new Color(0.30f, 0.04f, 0.02f, 0.90f);
+                _bgImage.color = new Color(1f, 0.58f, 0.50f, 1f);
 
             RefreshMeta();
         }
@@ -377,21 +380,9 @@ namespace CupheadOnline.UI
 
         static Text MakeLabel(GameObject parent, string text, int size, Color colour, Vector2 offset, Vector2 sizeDelta)
         {
-            var go = new GameObject("L_" + text);
-            go.transform.SetParent(parent.transform, false);
-
-            var rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.anchoredPosition = offset;
-            rt.sizeDelta = sizeDelta;
-
-            var t = go.AddComponent<Text>();
-            t.text = text;
-            t.fontSize = size;
-            t.color = colour;
-            t.alignment = TextAnchor.MiddleCenter;
-            t.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            return t;
+            return CupheadUiTheme.MakeLabel(
+                parent, text, size, colour, offset, sizeDelta,
+                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
         }
     }
 }

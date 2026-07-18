@@ -1,5 +1,55 @@
 # Changelog
 
+## v1.4.0 - 2026-07-18
+
+Feature release. The version jumps past the retired "1.3.x" lineage so stale installs can never be confused with current builds again.
+
+### Safety
+
+- Version handshake: Hello/Welcome now carry the mod version and a wire-protocol number. Peers on incompatible builds are refused with a clear "you have vX, they have vY" message instead of silently desyncing. Old pre-1.4.0 builds are detected and rejected too.
+- Level-entry ready gate: the host holds the level start (up to 10 s) until the guest reports its scene loaded, so nobody fights while their partner is still behind the loading iris. Fails open on timeout. `Networking.EnableLevelReadyGate`.
+- Auto-reconnect: after an unexpected mid-run disconnect, the guest automatically retries the last lobby (3 attempts); the host's recovery bundle restores session state on rejoin. `Networking.EnableAutoReconnect`.
+- Desync sentinel: the host samples boss HP and player positions every 2 s; the guest compares against its own simulation and, after two consecutive mismatches, force-corrects boss HP and requests a resync burst. `Networking.EnableDesyncSentinel`.
+- In-game mod health warning: menu scenes now show a card when any Harmony hook failed to apply, with an F9 shortcut to copy the report.
+
+### Sync quality
+
+- Plane (shmup) levels get the same proxy sync model as run-and-gun levels: host-simulated motors, snapshot-driven proxies, and drift correction.
+- The remote-player jitter buffer now scales with measured ping (1 snapshot on LAN-class connections up to 4 at 150 ms+).
+- Visual-only tracer streaks for the other player's shots on the side that does not simulate their projectiles, so remote fire is readable. `UI.EnableRemoteShotTracers`.
+- `Networking.EnemySyncExcludeNames`: comma-separated name substrings excluded from enemy state sync — an escape hatch for fights with nondeterministic spawn order.
+
+### Features
+
+- Comm wheel: hold C and press 1–4 to send WAIT! / GO! / REVIVE ME! / SWELL WORK! as a themed toast on both screens. `UI.EnableCommWheel`.
+- Team results card on the knockout screen: both players' deaths, parries, and retries side by side. `UI.EnableWinStatsCard`.
+- Ghost drift: a knocked-out player can steer their revive ghost sideways with their movement axis. `Gameplay.EnableGhostDrift`.
+- Lobby quality-of-life: live ping and a "save synced" line in the lobby roster, plus a toast when someone joins the lobby.
+
+### Future-proofing
+
+- `tools/audit-hooks.ps1`: audits every Harmony patch target and reflected member name against the decompiled game source; wired into `build.ps1` so a broken hook fails the build instead of shipping.
+- Weapon events now use a named `WeaponEventType` enum instead of magic bytes.
+
+## v1.2.25 - 2026-07-18
+
+### Multiplayer correctness
+
+- Fixed enemy/boss state sync never matching between peers: enemies are now addressed by a deterministic hierarchy hash instead of Unity `GetInstanceID()`, which is process-local and could never line up across two machines. This also removes a full-scene rescan that used to run for every unmatched packet.
+- Added real boss HP synchronisation: the host now broadcasts the level's `AbstractLevelProperties` health, and the client applies the difference through the game's own `DealDamage` path so boss phase changes and the win trigger fire in sync on both machines.
+- Fixed the parry broadcast patch targeting a method that does not exist (`LevelPlayerParryController.Parry`); it now hooks the real `StartParry`, so remote players see parries again.
+- Fixed deterministic RNG never engaging: the patches targeted `Rand.GetValue`, which does not exist in Cuphead. They now cover the real `Rand.Bool` / `Rand.PosOrNeg`, and the host seeds its own PRNG when generating a seed for the guest (previously only the guest was seeded, guaranteeing divergence).
+- Removed dead patches on `PlayerInput.GetButtonDown` / `GetButtonUp` (Cuphead's PlayerInput has no such methods; the Rewired-level patches already cover edge queries).
+- Remote players can now drive axis-based menu navigation: `MenuHorizontal`/`MenuVertical` reads are mapped to the replicated stick axes, and the DLC `Swap` button is included in the input frame.
+- Removed silent no-op writes to getter-only motor properties (`Dashing`, `Ducking`, `IsHit`, `IsUsingSuperOrEx`) on remote player proxies; their visuals are driven by the flag-transition events.
+- The plugin now logs a loud error summary when any Harmony patch fails to apply (a half-patched install previously froze both players on boss entry with no clear signal), and the failed-patch list is included in exported diagnostics.
+
+### Menu and UX
+
+- Added a shared CupHeads UI theme: every overlay (connection HUD, session panel, Battle Assist, boss health bars, Dev Lab, lobby cards) now uses Cuphead's own menu fonts, resolved from the game at runtime, instead of Arial.
+- Replaced flat dark rectangles with 9-sliced vintage card panels — aged sepia fill inside a rounded double ink rule with a gold accent — so mod menus read as part of the game's 1930s print style.
+- Connection quality now tints the HUD card (warm gold for okay, red for poor/disconnected) rather than swapping flat background colours.
+
 ## v1.2.24 - 2026-06-19
 
 - Fixed corrupted online loadout sync by replacing raw byte casts of Cuphead's large weapon/super/charm enum IDs with stable packet wire codes.

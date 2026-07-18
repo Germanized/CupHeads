@@ -89,7 +89,19 @@ namespace CupheadOnline.Patches
             if (!RemoteInputDriver.TryGetCurrent(playerId, out input))
                 return true;
 
-            value = actionId == 0 ? input.AxisX : actionId == 1 ? input.AxisY : 0f;
+            // MoveHorizontal/MoveVertical are actions 0/1; the menu navigation
+            // axes MenuHorizontal/MenuVertical (22/23) mirror the same stick.
+            switch (actionId)
+            {
+                case (int)CupheadButton.MoveHorizontal:
+                case (int)CupheadButton.MenuHorizontal:
+                    value = input.AxisX;
+                    break;
+                case (int)CupheadButton.MoveVertical:
+                case (int)CupheadButton.MenuVertical:
+                    value = input.AxisY;
+                    break;
+            }
             return true;
         }
 
@@ -148,6 +160,7 @@ namespace CupheadOnline.Patches
             Pack(playerId, CupheadButton.MenuLeft, ref buttons);
             Pack(playerId, CupheadButton.MenuDown, ref buttons);
             Pack(playerId, CupheadButton.MenuRight, ref buttons);
+            Pack(playerId, CupheadButton.Swap, ref buttons);
 
             float axisX;
             float axisY;

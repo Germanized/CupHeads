@@ -203,6 +203,17 @@ $env:CUPHEAD_PATH = $CupheadPath
 Write-Step "Restoring NuGet packages"
 Invoke-Checked { dotnet restore $ModProject --nologo } "NuGet restore failed."
 
+Write-Step "Auditing Harmony hook targets"
+$AuditScript = Join-Path $Root "toolsudit-hooks.ps1"
+if (Test-Path $AuditScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $AuditScript
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Hook audit failed - a Harmony target or reflected member no longer exists."
+    }
+} else {
+    Write-Host "  (toolsudit-hooks.ps1 not found - skipping)"
+}
+
 Write-Step "Building mod DLL ($Configuration)"
 Invoke-Checked { dotnet build $ModProject -c $Configuration --nologo --no-restore /p:DeployPluginOnBuild=false } "Mod build failed."
 

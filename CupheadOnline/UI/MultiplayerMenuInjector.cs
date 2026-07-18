@@ -191,10 +191,10 @@ namespace CupheadOnline.UI
 
             var txt = go.AddComponent<Text>();
             txt.text       = "MULTIPLAYER (debug — awaiting button type info)";
-            txt.color      = Color.yellow;
+            txt.color      = CupheadUiTheme.Gold;
             txt.fontSize   = 20;
             txt.alignment  = TextAnchor.MiddleCenter;
-            txt.font       = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            txt.font       = CupheadUiTheme.MenuFont;
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

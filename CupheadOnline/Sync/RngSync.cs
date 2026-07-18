@@ -35,11 +35,15 @@ namespace CupheadOnline.Sync
             Plugin.Log.LogInfo($"[RngSync] Seeded with {seed:X8}");
         }
 
-        /// <summary>Generate a new random seed for use in the next SceneChangePacket.</summary>
+        /// <summary>
+        /// Generate a new random seed for the next SceneChangePacket and seed the
+        /// LOCAL PRNG with it too, so the sender (host) runs the same sequence as
+        /// the peer that receives the seed.
+        /// </summary>
         public static uint NextSeed()
         {
             var seed = (uint)(DateTime.UtcNow.Ticks ^ System.Diagnostics.Process.GetCurrentProcess().Id);
-            CurrentSeed = seed;
+            SetSeed(seed);
             return seed;
         }
 
@@ -59,6 +63,12 @@ namespace CupheadOnline.Sync
             if (!IsSeeded) return UnityEngine.Random.Range(min, max);
             if (min >= max) return min;
             return min + (int)(NextRaw() % (uint)(max - min));
+        }
+
+        public static bool NextBool()
+        {
+            if (!IsSeeded) return UnityEngine.Random.Range(0, 2) == 1;
+            return (NextRaw() & 1UL) != 0UL;
         }
 
         // ──────────────────────────────────────────────────────────────────────

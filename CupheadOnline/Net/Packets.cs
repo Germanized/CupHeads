@@ -8,6 +8,16 @@ namespace CupheadOnline.Net
         void Read(BinaryReader r);
     }
 
+    /// <summary>
+    /// Wire-format identity. PROTOCOL is bumped whenever any packet struct or
+    /// packet meaning changes; peers whose PROTOCOL differs refuse to connect
+    /// instead of silently misreading each other's traffic.
+    /// </summary>
+    public static class NetProtocol
+    {
+        public const byte PROTOCOL = 2;
+    }
+
     public enum PacketType : byte
     {
         PlayerState = 0,
@@ -32,6 +42,21 @@ namespace CupheadOnline.Net
         PlayerStatus = 19,
         ReviveRequest = 20,
         ReviveGrant = 21,
+        VersionReject = 22,
+        SceneReady = 23,
+        CommMessage = 24,
+        StatsReport = 25,
+        StateHash = 26,
+    }
+
+    /// <summary>Named weapon-event kinds (previously magic bytes 0–4).</summary>
+    public enum WeaponEventType : byte
+    {
+        Fire = 0,
+        Ex = 1,
+        Super = 2,
+        Parry = 3,
+        Switch = 4,
     }
 
     public enum SessionSignalKind : byte
@@ -486,6 +511,136 @@ namespace CupheadOnline.Net
         {
             PosX = r.ReadSingle();
             PosY = r.ReadSingle();
+            Tick = r.ReadUInt32();
+        }
+    }
+
+    /// <summary>Sent by a peer to refuse a connection from an incompatible build.</summary>
+    public struct VersionRejectPacket : IPacket
+    {
+        public byte Protocol;
+        public string Version;
+        public string Reason;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(Protocol);
+            w.Write(Version ?? string.Empty);
+            w.Write(Reason ?? string.Empty);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            Protocol = r.ReadByte();
+            Version = r.ReadString();
+            Reason = r.ReadString();
+        }
+    }
+
+    /// <summary>Guest → host: "my copy of this level finished loading".</summary>
+    public struct SceneReadyPacket : IPacket
+    {
+        public int LevelEnum;
+        public uint Tick;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(LevelEnum);
+            w.Write(Tick);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            LevelEnum = r.ReadInt32();
+            Tick = r.ReadUInt32();
+        }
+    }
+
+    /// <summary>Canned comm-wheel message ("wait", "go", "revive me", "nice!").</summary>
+    public struct CommMessagePacket : IPacket
+    {
+        public byte ParticipantId;
+        public byte MessageId;
+        public uint Tick;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(ParticipantId);
+            w.Write(MessageId);
+            w.Write(Tick);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            ParticipantId = r.ReadByte();
+            MessageId = r.ReadByte();
+            Tick = r.ReadUInt32();
+        }
+    }
+
+    /// <summary>Per-peer level stats, exchanged when a level ends for the results card.</summary>
+    public struct StatsReportPacket : IPacket
+    {
+        public byte ParticipantId;
+        public ushort Deaths;
+        public ushort Parries;
+        public ushort Retries;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(ParticipantId);
+            w.Write(Deaths);
+            w.Write(Parries);
+            w.Write(Retries);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            ParticipantId = r.ReadByte();
+            Deaths = r.ReadUInt16();
+            Parries = r.ReadUInt16();
+            Retries = r.ReadUInt16();
+        }
+    }
+
+    /// <summary>
+    /// Host → guest sanity sample: rough boss HP + player positions. The guest
+    /// compares against its own simulation and requests a resync after repeated
+    /// mismatches.
+    /// </summary>
+    public struct StateHashPacket : IPacket
+    {
+        public float BossHp;
+        public float P1X;
+        public float P1Y;
+        public float P2X;
+        public float P2Y;
+        public byte Flags;
+        public uint Tick;
+
+        public bool HasBossHp => (Flags & 1) != 0;
+        public bool HasP1 => (Flags & 2) != 0;
+        public bool HasP2 => (Flags & 4) != 0;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(BossHp);
+            w.Write(P1X);
+            w.Write(P1Y);
+            w.Write(P2X);
+            w.Write(P2Y);
+            w.Write(Flags);
+            w.Write(Tick);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            BossHp = r.ReadSingle();
+            P1X = r.ReadSingle();
+            P1Y = r.ReadSingle();
+            P2X = r.ReadSingle();
+            P2Y = r.ReadSingle();
+            Flags = r.ReadByte();
             Tick = r.ReadUInt32();
         }
     }
