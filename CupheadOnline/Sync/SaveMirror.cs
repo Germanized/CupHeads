@@ -88,6 +88,9 @@ namespace CupheadOnline.Sync
 
         public static void Update()
         {
+            if (!_selfTestDone && PlayerData.Initialized)
+                RunSelfTest();
+
             if (MultiplayerSession.IsHost)
             {
                 TickHostBroadcast();
@@ -430,6 +433,76 @@ namespace CupheadOnline.Sync
             _pendingSlot = -1;
             _pendingDialoguer = null;
             MirroredSlot = -1;
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        //  Self-test
+        // ──────────────────────────────────────────────────────────────────────
+
+        static bool _selfTestDone;
+
+        /// <summary>
+        /// Once per launch, push the current save through the whole mirror
+        /// pipeline (JsonUtility, gzip, chunk packets, reassembly) without
+        /// touching any save data, so a broken runtime shows up in the log
+        /// before a session ever depends on it.
+        /// </summary>
+        static void RunSelfTest()
+        {
+            _selfTestDone = true;
+            try
+            {
+                var data = PlayerData.GetDataForSlot(PlayerData.CurrentSaveFileIndex);
+                if (data == null)
+                    return;
+
+                string json = JsonUtility.ToJson(data);
+                byte[] payload = Compress(Encoding.UTF8.GetBytes(json));
+
+                int chunkSize = SaveMirrorChunkPacket.MaxChunkBytes;
+                int chunkCount = Math.Max(1, (payload.Length + chunkSize - 1) / chunkSize);
+                var assembled = new byte[payload.Length];
+                for (int i = 0; i < chunkCount; i++)
+                {
+                    int offset = i * chunkSize;
+                    int length = Math.Min(chunkSize, payload.Length - offset);
+                    var chunk = new byte[length];
+                    Buffer.BlockCopy(payload, offset, chunk, 0, length);
+
+                    var sent = new SaveMirrorChunkPacket
+                    {
+                        TransferId = 1,
+                        Slot = 0,
+                        ChunkIndex = (ushort)i,
+                        ChunkCount = (ushort)chunkCount,
+                        TotalBytes = payload.Length,
+                        Data = chunk,
+                    };
+                    var received = new SaveMirrorChunkPacket();
+                    using (var ms = new MemoryStream())
+                    {
+                        var w = new BinaryWriter(ms);
+                        sent.Write(w);
+                        w.Flush();
+                        ms.Position = 0;
+                        received.Read(new BinaryReader(ms));
+                    }
+                    Buffer.BlockCopy(received.Data, 0, assembled, offset, received.Data.Length);
+                }
+
+                string roundTrip = Encoding.UTF8.GetString(Decompress(assembled));
+                var copy = JsonUtility.FromJson<PlayerData>(roundTrip);
+                bool ok = copy != null && JsonUtility.ToJson(copy) == json;
+
+                if (ok)
+                    Plugin.Log.LogInfo("[SaveMirror] Self-test OK (" + json.Length + " chars, " + payload.Length + " bytes gzipped, " + chunkCount + " chunk(s)).");
+                else
+                    Plugin.Log.LogWarning("[SaveMirror] Self-test FAILED: the save did not survive the mirror pipeline unchanged.");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("[SaveMirror] Self-test FAILED: " + ex.GetType().Name + ": " + ex.Message);
+            }
         }
 
         static PlayerData[] GetSaveFiles()

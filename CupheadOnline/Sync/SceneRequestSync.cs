@@ -110,15 +110,19 @@ namespace CupheadOnline.Sync
             if (SceneLoader.CurrentlyLoading)
                 return; // the host is already moving; the guest will follow
 
+            // Inside a level every scene change (knockout to the results screen,
+            // the next dice board, a platforming exit) is one the host's own
+            // game makes too. Honouring the guest's copy could only cut the
+            // host's sequence short, so level/scene requests are menu-only.
             var level = Level.Current;
-            bool fightInProgress = level != null && !level.Ending && !Level.Won;
+            bool inLevel = level != null;
 
             try
             {
                 switch (pkt.RequestKind)
                 {
                     case SceneRequestKind.LoadLevel:
-                        if (fightInProgress || !Enum.IsDefined(typeof(Levels), pkt.Target))
+                        if (inLevel || !Enum.IsDefined(typeof(Levels), pkt.Target))
                             return;
                         ApplyMode(pkt.Mode);
                         Announce("Your partner started a level.");
@@ -130,7 +134,7 @@ namespace CupheadOnline.Sync
                         return;
 
                     case SceneRequestKind.LoadScene:
-                        if (fightInProgress || !Enum.IsDefined(typeof(Scenes), pkt.Target))
+                        if (inLevel || !Enum.IsDefined(typeof(Scenes), pkt.Target))
                             return;
                         var scene = (Scenes)pkt.Target;
                         if (IsLeaveScene(scene))

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.2 - 2026-10-15
+
+Verification fixes. Wire protocol is still 4, so 1.5.2 and 1.5.1 can play together.
+
+- While the host is inside a level, it ignores the guest's forwarded level/scene changes. Every such change in a level (knockout to the results screen, the next dice board, a platforming exit) is one the host's own game makes too, so honouring the guest's copy could only cut the host's knockout sequence short. Retry and Exit to Map are unchanged.
+- The save mirror runs a self-test once per launch: the current save goes through the whole pipeline (JSON, gzip, chunk packets, reassembly) without touching any save data, and the result is logged as `[SaveMirror] Self-test OK` or `FAILED`.
+
 ## v1.5.1 - 2026-10-15
 
 Two-player menus and shared mechanics. Wire protocol 4: both players must update.

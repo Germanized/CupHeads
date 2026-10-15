@@ -556,6 +556,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.5.1";
+        public const string VERSION = "1.5.2";
     }
 }
