@@ -36,10 +36,40 @@ namespace CupheadOnline.Diagnostics
             }
         }
 
+        static bool? _pressTest;
+
+        /// <summary>
+        /// cupheads-presstest.flag: on screen, Player One joins on the keyboard
+        /// by itself, then the game asks for a press on a spare controller and
+        /// reports whether it was handed over.
+        /// </summary>
+        public static bool PressTestActive
+        {
+            get
+            {
+                if (!_pressTest.HasValue)
+                {
+                    try { _pressTest = File.Exists(Path.Combine(BepInEx.Paths.ConfigPath, "cupheads-presstest.flag")); }
+                    catch { _pressTest = false; }
+                }
+                return _pressTest.Value;
+            }
+        }
+
+        /// <summary>Either developer run mode (both skip the intro video).</summary>
+        public static bool AnyActive => Active || PressTestActive;
+
         static string OutDir => Path.Combine(BepInEx.Paths.BepInExRootPath, "CupHeadsUiTour");
 
         public static void MaybeBegin(MonoBehaviour host)
         {
+            if (host != null && PressTestActive && !Active)
+            {
+                Plugin.Log.LogInfo("[PressTest] Starting the controller press test.");
+                host.StartCoroutine(RunPressTest());
+                return;
+            }
+
             if (!Active || host == null)
                 return;
 
@@ -111,9 +141,72 @@ namespace CupheadOnline.Diagnostics
             yield return Shot(++shot, "results-card");
             UiPreview.SetStep(0);
 
-            Plugin.Log.LogInfo("[UiTour] Input devices: " + InputDeviceSwitcher.Describe());
+            // ── Controller handoff (offline rules), as if a spare pad was pressed ──
+            Plugin.Log.LogInfo("[UiTour] Input before handoff: " + InputDeviceSwitcher.Describe());
+            if (InputDeviceSwitcher.TestHandOverFirstSpareController())
+            {
+                yield return Pause(1.2f);
+                yield return Shot(++shot, "controller-handoff");
+                Plugin.Log.LogInfo("[UiTour] Input after handoff: " + InputDeviceSwitcher.Describe());
+            }
+            else
+            {
+                Plugin.Log.LogInfo("[UiTour] No spare controller to hand over.");
+            }
             Plugin.Log.LogInfo("[UiTour] Done: " + shot + " screenshot(s) in " + OutDir + ". Quitting.");
             yield return Pause(1f);
+            Application.Quit();
+        }
+
+        static IEnumerator RunPressTest()
+        {
+            yield return WaitFor(() => TryAdvanceTitle(), 90f, "title screen");
+            yield return WaitFor(() => SceneManager.GetActiveScene().name == "scene_slot_select"
+                                       && MpMenuState.ScreenInstance != null, 60f, "main menu");
+            yield return Pause(2f);
+
+            var playerOne = PlayerManager.GetPlayerInput(PlayerId.PlayerOne);
+            if (playerOne != null && playerOne.controllers.joystickCount > 0)
+            {
+                // A press during the title screen joined Player One on the
+                // controller the vanilla way; the switch was never exercised.
+                Plugin.Log.LogInfo("[PressTest] INVALID: Player One already had the controller before the prompt. " + InputDeviceSwitcher.Describe());
+                ConnectionHUD.Show("Test not valid: the controller was pressed too early. Closing.");
+                yield return Pause(4f);
+                Application.Quit();
+                yield break;
+            }
+            Plugin.Log.LogInfo("[PressTest] Waiting for a controller press. " + InputDeviceSwitcher.Describe());
+
+            float until = Time.realtimeSinceStartup + 90f;
+            float nextPrompt = 0f;
+            bool passed = false;
+            while (Time.realtimeSinceStartup < until)
+            {
+                if (playerOne != null && playerOne.controllers.joystickCount > 0)
+                {
+                    passed = true;
+                    break;
+                }
+                if (Time.realtimeSinceStartup >= nextPrompt)
+                {
+                    nextPrompt = Time.realtimeSinceStartup + 3f;
+                    ConnectionHUD.Show("PRESS A ON YOUR CONTROLLER NOW (you're on the keyboard).");
+                }
+                yield return null;
+            }
+
+            Plugin.Log.LogInfo("[PressTest] " + (passed ? "PASSED" : "NO PRESS SEEN") + ": " + InputDeviceSwitcher.Describe());
+            yield return Pause(1f);
+            try
+            {
+                Directory.CreateDirectory(OutDir);
+                ScreenCapture.CaptureScreenshot(Path.Combine(OutDir, "press-test.png"));
+            }
+            catch { }
+            yield return Pause(1f);
+            ConnectionHUD.Show(passed ? "Controller test passed! Closing in a moment." : "No controller press seen. Closing.");
+            yield return Pause(4f);
             Application.Quit();
         }
 

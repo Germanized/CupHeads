@@ -245,8 +245,9 @@ namespace CupheadOnline.UI
             NativeUiKit.SetSignal(_signal, _ping, connected);
             _signal[0].transform.parent.gameObject.SetActive(connected || _disconnected);
 
-            // Grow the card for two- or three-line messages.
-            float height = Mathf.Clamp(64f + _line.preferredHeight, 96f, 150f);
+            // Grow the card for two- or three-line messages: the line starts
+            // 54 px down, and the printed border needs ~28 px below the text.
+            float height = Mathf.Clamp(54f + _line.preferredHeight + 28f, 96f, 160f);
             if (Mathf.Abs(_cardRt.sizeDelta.y - height) > 0.5f)
                 _cardRt.sizeDelta = new Vector2(Width, height);
         }

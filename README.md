@@ -258,6 +258,7 @@ If Dev Lab fails to spawn or control Player Two, the bug is likely in local spaw
 These stay off unless a flag file exists in `BepInEx/config/`:
 
 * `cupheads-uitour.flag`: the game drives itself through every CupHeads screen (main menu, shortcuts card, the lobby in each phase with sample data, the in-game overlays), saves a screenshot of each from its own renderer to `BepInEx/CupHeadsUiTour/`, and quits. It uses no keyboard or mouse input, runs muted in a 1280x720 window, keeps rendering in the background, and skips the intro video, so the PC stays usable. Unity remembers the window mode on exit, so restore your display settings afterwards (or run the tour from a script that saves and restores the `Screenmanager` values under `HKCU\Software\Studio MDHR\Cuphead`).
+* `cupheads-presstest.flag`: on screen, Player One joins on the keyboard by itself, then the game asks for one press on a spare controller (top-right tag) and logs `[PressTest] PASSED` once the controller is handed over, saves `BepInEx/CupHeadsUiTour/press-test.png`, and quits.
 * `cupheads-uipreview.flag`: in the lobby, `Insert` steps through every lobby phase with sample data; `Home` shows the in-game overlays and then the results card.
 * `cupheads-uidump.flag`: dumps the save-select scene's UI hierarchy and exports its sprites to `BepInEx/CupHeadsUiDump/`.
 

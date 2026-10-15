@@ -71,7 +71,7 @@ namespace CupheadOnline
         public static bool EnableQoLHotkeys => _cfgEnableQoLHotkeys == null || _cfgEnableQoLHotkeys.Value;
         public static bool LatencyFriendlyDamage => _cfgLatencyFriendlyDamage == null || _cfgLatencyFriendlyDamage.Value;
         public static bool EnableLocalDevSession => _cfgEnableLocalDevSession != null && _cfgEnableLocalDevSession.Value;
-        public static bool EnableStartupSplash => (_cfgEnableStartupSplash == null || _cfgEnableStartupSplash.Value) && !Diagnostics.UiTour.Active;
+        public static bool EnableStartupSplash => (_cfgEnableStartupSplash == null || _cfgEnableStartupSplash.Value) && !Diagnostics.UiTour.AnyActive;
         public static bool StartupSplashAllowSkip => _cfgStartupSplashAllowSkip == null || _cfgStartupSplashAllowSkip.Value;
         public static bool StartupSplashStaticOverlay => _cfgStartupSplashStaticOverlay != null && _cfgStartupSplashStaticOverlay.Value;
         public static float StartupSplashVolume =>
@@ -620,6 +620,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.6.1";
+        public const string VERSION = "1.6.2";
     }
 }

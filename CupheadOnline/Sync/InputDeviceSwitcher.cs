@@ -71,9 +71,28 @@ namespace CupheadOnline.Sync
         static void AdoptPressedController(PlayerId target, bool updateSlot)
         {
             Joystick joystick = CupheadInput.CheckForUnconnectedControllerPress();
-            if (joystick == null)
-                return;
+            if (joystick != null)
+                Adopt(joystick, target, updateSlot);
+        }
 
+        /// <summary>
+        /// UI tour: hand the first spare controller over exactly as a button
+        /// press on it would (offline rules). False if there is none.
+        /// </summary>
+        internal static bool TestHandOverFirstSpareController()
+        {
+            foreach (var joystick in ReInput.controllers.Joysticks)
+            {
+                if (joystick == null || ReInput.controllers.IsJoystickAssigned(joystick))
+                    continue;
+                Adopt(joystick, PlayerId.PlayerOne, updateSlot: true);
+                return true;
+            }
+            return false;
+        }
+
+        static void Adopt(Joystick joystick, PlayerId target, bool updateSlot)
+        {
             var player = PlayerManager.GetPlayerInput(target);
             if (player == null)
                 return;
@@ -156,11 +175,29 @@ namespace CupheadOnline.Sync
                 var one = PlayerManager.GetPlayerInput(PlayerId.PlayerOne);
                 var two = PlayerManager.GetPlayerInput(PlayerId.PlayerTwo);
                 int connected = ReInput.controllers.joystickCount;
+                string names = string.Empty;
+                foreach (var joystick in ReInput.controllers.Joysticks)
+                {
+                    if (joystick == null) continue;
+                    names += (names.Length > 0 ? ", " : " (") + joystick.name
+                        + (ReInput.controllers.IsJoystickAssigned(joystick) ? " assigned" : " spare");
+                }
+                if (names.Length > 0) names += ")";
+
+                string slot = string.Empty;
+                var slotOne = Slot(0);
+                if (slotOne != null)
+                {
+                    var state = AccessTools.Field(slotOne.GetType(), "controllerState");
+                    if (state != null)
+                        slot = "; P1 slot " + state.GetValue(slotOne);
+                }
+
                 return "P1 keyboard=" + (one != null && one.controllers.hasKeyboard)
                     + " pads=" + (one != null ? one.controllers.joystickCount : 0)
                     + "; P2 keyboard=" + (two != null && two.controllers.hasKeyboard)
                     + " pads=" + (two != null ? two.controllers.joystickCount : 0)
-                    + "; controllers connected=" + connected;
+                    + "; controllers connected=" + connected + names + slot;
             }
             catch (Exception ex)
             {

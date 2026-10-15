@@ -1,6 +1,6 @@
 {
   "name": "cupheads-installer",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Installer for the CupHeads multiplayer mod",
   "author": "Germanized / Sh0kr",
   "main": "main.js",

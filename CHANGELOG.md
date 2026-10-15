@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.6.2 - 2026-10-15
+
+A small follow-up. Wire protocol is still 4, so 1.6.2 plays with 1.5.x and 1.6.x.
+
+- The connection tag now grows to fit two- and three-line messages. "Controller ready! Your keyboard still works too." was clipped below the card's printed border.
+- Switching from keyboard to controller is now confirmed with a real controller: starting on the keyboard and pressing A on a spare Xbox controller hands it to Player One, the keyboard keeps working, and every button prompt switches to the controller's buttons.
+- Diagnostics reports list each connected controller (spare or assigned) and Player One's controller state.
+- Developer tools (off unless a flag file exists): the UI tour now also checks the controller handoff, and a new press test (`cupheads-presstest.flag`) joins Player One on the keyboard by itself, asks for one controller press on screen, and logs whether it was handed over.
+
 ## v1.6.1 - 2026-10-15
 
 Quality of life. Wire protocol is still 4, so 1.6.1 plays with 1.5.x and 1.6.0.
