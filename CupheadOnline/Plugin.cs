@@ -53,6 +53,13 @@ namespace CupheadOnline
         static ConfigEntry<bool> _cfgEnableRemoteShotTracers;
         static ConfigEntry<bool> _cfgEnableSharedPause;
         static ConfigEntry<string> _cfgEnemySyncExcludeNames;
+        static ConfigEntry<string> _cfgLastPartnerSteamId;
+        static ConfigEntry<string> _cfgLastPartnerName;
+        static ConfigEntry<bool> _cfgAlwaysShowConnectionTag;
+        static ConfigEntry<bool> _cfgCheckForUpdates;
+        static ConfigEntry<bool> _cfgBackupSaves;
+        static ConfigEntry<int> _cfgSaveBackupsToKeep;
+        static ConfigEntry<bool> _cfgSwitchInputAnytime;
 
         public static bool ShowConnectionHud => _cfgShowConnectionHud == null || _cfgShowConnectionHud.Value;
         public static bool VerboseLoggingEnabled => _cfgVerboseLogging != null && _cfgVerboseLogging.Value;
@@ -64,7 +71,7 @@ namespace CupheadOnline
         public static bool EnableQoLHotkeys => _cfgEnableQoLHotkeys == null || _cfgEnableQoLHotkeys.Value;
         public static bool LatencyFriendlyDamage => _cfgLatencyFriendlyDamage == null || _cfgLatencyFriendlyDamage.Value;
         public static bool EnableLocalDevSession => _cfgEnableLocalDevSession != null && _cfgEnableLocalDevSession.Value;
-        public static bool EnableStartupSplash => _cfgEnableStartupSplash == null || _cfgEnableStartupSplash.Value;
+        public static bool EnableStartupSplash => (_cfgEnableStartupSplash == null || _cfgEnableStartupSplash.Value) && !Diagnostics.UiTour.Active;
         public static bool StartupSplashAllowSkip => _cfgStartupSplashAllowSkip == null || _cfgStartupSplashAllowSkip.Value;
         public static bool StartupSplashStaticOverlay => _cfgStartupSplashStaticOverlay != null && _cfgStartupSplashStaticOverlay.Value;
         public static float StartupSplashVolume =>
@@ -87,6 +94,32 @@ namespace CupheadOnline
         public static string EnemySyncExcludeNames =>
             _cfgEnemySyncExcludeNames == null ? string.Empty : _cfgEnemySyncExcludeNames.Value;
         public static int FailedPatchCount => _failedPatchNames.Count;
+        public static bool AlwaysShowConnectionTag => _cfgAlwaysShowConnectionTag != null && _cfgAlwaysShowConnectionTag.Value;
+        public static bool SwitchInputAnytime => _cfgSwitchInputAnytime == null || _cfgSwitchInputAnytime.Value;
+        public static bool CheckForUpdates => _cfgCheckForUpdates == null || _cfgCheckForUpdates.Value;
+        public static bool BackupSavesBeforeSessions => _cfgBackupSaves == null || _cfgBackupSaves.Value;
+        public static int SaveBackupsToKeep => _cfgSaveBackupsToKeep == null ? 10 : Mathf.Clamp(_cfgSaveBackupsToKeep.Value, 1, 100);
+
+        /// <summary>Steam ID of the last person a session connected with, or 0.</summary>
+        public static ulong LastPartnerSteamId
+        {
+            get
+            {
+                ulong id;
+                return _cfgLastPartnerSteamId != null && ulong.TryParse(_cfgLastPartnerSteamId.Value, out id) ? id : 0UL;
+            }
+        }
+
+        public static string LastPartnerName => _cfgLastPartnerName == null ? string.Empty : _cfgLastPartnerName.Value;
+
+        public static void RememberPartner(ulong steamId, string name)
+        {
+            if (_cfgLastPartnerSteamId == null || steamId == 0UL)
+                return;
+            _cfgLastPartnerSteamId.Value = steamId.ToString();
+            if (!string.IsNullOrEmpty(name) && name != "Unknown Player")
+                _cfgLastPartnerName.Value = name;
+        }
 
         // ──────────────────────────────────────────────────────────────────────
         //  Unity lifecycle
@@ -152,6 +185,22 @@ namespace CupheadOnline
                 "Draw visual-only tracer streaks for extra (3rd+) participants' shots. The other built-in player's real shots are always visible.");
             _cfgEnableSharedPause = Config.Bind("Networking", "EnableSharedPause", true,
                 "When either player opens the pause menu inside a level, freeze both games (like local co-op) so the fight stays in sync.");
+            _cfgLastPartnerSteamId = Config.Bind("Multiplayer", "LastPartnerSteamId", string.Empty,
+                "Steam ID of the last person you played with, for the lobby's PLAY WITH shortcut. Clear it to forget them.");
+            _cfgLastPartnerName = Config.Bind("Multiplayer", "LastPartnerName", string.Empty,
+                "Name of the last person you played with (display only).");
+            _cfgAlwaysShowConnectionTag = Config.Bind("UI", "AlwaysShowConnectionTag", false,
+                "Keep the partner / ping tag in the top-right corner visible during a session, instead of only when there is news or the connection is laggy.");
+            _cfgCheckForUpdates = Config.Bind("Updates", "CheckForUpdates", true,
+                "Once per launch, check GitHub for a newer CupHeads release and mention it on the main menu and in the lobby.");
+            _cfgBackupSaves = Config.Bind("Saves", "BackupBeforeOnlineSessions", true,
+                "Copy your Cuphead save files to BepInEx/CupHeads/SaveBackups when an online session starts.");
+            _cfgSaveBackupsToKeep = Config.Bind("Saves", "BackupsToKeep", 10,
+                "How many save backups to keep (oldest are removed first).");
+            _cfgSwitchInputAnytime = Config.Bind("Controls", "SwitchInputAnytime", true,
+                "Use the keyboard or any controller at any time. Online: pressing a button on any controller hands it to you. "
+                + "Offline: a spare controller goes to Player One while Player One is on the keyboard and nobody has joined as Player Two "
+                + "(a second controller still lets a couch Player Two join). Turn off for vanilla behaviour.");
 
             // Networking manager — Steam P2P transport (lobby + invite flow)
             Net = new SteamNetManager();
@@ -165,6 +214,11 @@ namespace CupheadOnline
                 Log.LogInfo("[Net] " + msg);
             };
             Net.TryInitializeSteam();
+            InviteRouter.CheckCommandLine();
+            SaveBackups.Initialize();
+            UpdateChecker.Begin(this);
+            Diagnostics.UiTour.MaybeBegin(this);
+            Log.LogInfo("[Plugin] Run in background: " + Application.runInBackground + ".");
 
             // ── Diagnostic: scan our own assembly types and expose any failures ──
             try
@@ -286,6 +340,7 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollOnePatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollTwoPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollThreePatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerManagerInputSwitchPatch));
 
             // Deterministic RNG
             PatchTracked(harmony, registeredPatchTypes, typeof(RandPatch));
@@ -423,6 +478,9 @@ namespace CupheadOnline
             add("PatchHealthNotice", PatchHealthNotice.Tick);
             add("SessionPausePanel", SessionPausePanel.Ensure);
             add("UiPreview", UiPreview.Tick);
+            add("InviteRouter", InviteRouter.Tick);
+            add("BackgroundRun", BackgroundRunGuard.Tick);
+            add("ShortcutsCard", ShortcutsCard.Tick);
             add("NativeUiFonts", NativeUiKit.Tick);
 
             _ticks = ticks.ToArray();
@@ -543,7 +601,11 @@ namespace CupheadOnline
                           + "Startup Splash Volume: " + StartupSplashVolume.ToString("0.00") + nl
                           + "Boss HP Scaling Enabled: " + BossHpScalingEnabled + nl
                           + "Boss HP Per Extra Player: " + BossHpPerExtraPlayer.ToString("0.00") + nl
-                          + BossHealthScaler.GetStatusSummary() + nl;
+                          + BossHealthScaler.GetStatusSummary() + nl
+                          + "Switch Input Anytime: " + SwitchInputAnytime + nl
+                          + "Input Devices: " + InputDeviceSwitcher.Describe() + nl
+                          + "Update Check: " + (UpdateChecker.LatestVersion == null ? "not done" : "latest v" + UpdateChecker.LatestVersion) + nl
+                          + "Last Partner: " + (LastPartnerSteamId == 0UL ? "none" : LastPartnerName) + nl;
 
             if (Net != null)
                 report += nl + Net.BuildDiagnosticsReport();
@@ -558,6 +620,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.6.0";
+        public const string VERSION = "1.6.1";
     }
 }

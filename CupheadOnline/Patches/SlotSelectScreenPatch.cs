@@ -543,7 +543,54 @@ namespace CupheadOnline.Patches
         // Row ids
         const int RowHost = 1, RowJoin = 2, RowRetry = 3, RowColor = 4, RowBugReport = 5, RowBack = 6,
                   RowCancel = 7, RowOpenFriends = 8, RowInvite = 9, RowCopyCode = 10, RowCloseLobby = 11,
-                  RowSaveFile = 12, RowPlayAs = 13, RowStart = 14, RowAskSync = 15, RowLeave = 16;
+                  RowSaveFile = 12, RowPlayAs = 13, RowStart = 14, RowAskSync = 15, RowLeave = 16,
+                  RowPlayWith = 17, RowInvitePartner = 18, RowGetUpdate = 19;
+
+        /// <summary>The last person this player connected with, as Steam sees them now.</summary>
+        struct Partner
+        {
+            public bool Known;
+            public ulong Id;
+            public string Name;
+            public bool Online;
+            public bool InCuphead;
+        }
+
+        static Partner GetPartner()
+        {
+            var partner = new Partner();
+            if (_preview.HasValue)
+            {
+                partner.Known = true;
+                partner.Name = "Daniel";
+                partner.Online = true;
+                partner.InCuphead = true;
+                return partner;
+            }
+
+            ulong id = Plugin.LastPartnerSteamId;
+            if (id == 0UL || Plugin.Net == null || !Plugin.Net.IsSteamReady)
+                return partner;
+
+            string name;
+            bool online, inCuphead;
+            if (!Plugin.Net.TryGetFriendPresence(id, out name, out online, out inCuphead))
+                return partner;
+
+            partner.Known = true;
+            partner.Id = id;
+            partner.Name = string.IsNullOrEmpty(name) ? Plugin.LastPartnerName : name;
+            if (string.IsNullOrEmpty(partner.Name))
+                partner.Name = "your partner";
+            partner.Online = online;
+            partner.InCuphead = inCuphead;
+            return partner;
+        }
+
+        static string PartnerLabel(Partner partner)
+        {
+            return Shorten(partner.Name, 14).ToUpperInvariant();
+        }
 
         static bool      _joinOverlayReady;
         static bool      _waitingForInvite;
@@ -637,6 +684,15 @@ namespace CupheadOnline.Patches
 
             UpdateMainFooterText();
 
+            // An accepted Steam invite brings the lobby up by itself.
+            if (InviteRouter.ConsumeOpenLobbyRequest()
+             && Plugin.Net != null
+             && (Plugin.Net.IsInLobby || Plugin.Net.IsInputLocked || Plugin.Net.IsConnected))
+            {
+                EnterMpMenu(__instance);
+                return;
+            }
+
             var ef = MpMenuState.EnumItemsField;
             var sf = MpMenuState.SelectionField;
             if (ef == null || sf == null) return;
@@ -657,21 +713,22 @@ namespace CupheadOnline.Patches
             if (MpMenuState.MainFooterText == null) return;
 
             string footer = "CupHeads v" + PluginInfo.VERSION;
-            if (Plugin.Net == null)
-            {
-                MpMenuState.MainFooterText.text = footer;
-                return;
-            }
+            if (UpdateChecker.UpdateAvailable)
+                footer += "  |  v" + UpdateChecker.LatestVersion + " is out (Multiplayer menu)";
 
-            if (Plugin.Net.IsConnected || Plugin.Net.IsInLobby)
+            if (Plugin.Net != null && (Plugin.Net.IsConnected || Plugin.Net.IsInLobby))
             {
                 string sessionHint = SessionSync.GetFooterHint();
                 if (!string.IsNullOrEmpty(sessionHint))
                     footer += "  |  " + sessionHint;
             }
-            else if (!Plugin.Net.IsSteamReady)
+            else if (Plugin.Net != null && !Plugin.Net.IsSteamReady)
             {
                 footer += "  |  Steam unavailable outside Steam";
+            }
+            else if (!UpdateChecker.UpdateAvailable && Plugin.EnableQoLHotkeys)
+            {
+                footer += "  |  F1 shortcuts";
             }
 
             if (MpMenuState.MainFooterText.text != footer)
@@ -936,6 +993,36 @@ namespace CupheadOnline.Patches
 
         static int PreviewPing => 42;
 
+        // ── UI tour hooks (Diagnostics/UiTour drives the lobby without input) ──
+
+        internal static int TourPhaseCount => (int)Phase.GuestConnected + 1;
+
+        internal static string TourPhaseName(int phase) => ((Phase)phase).ToString();
+
+        internal static bool TourOpenLobby()
+        {
+            var inst = MpMenuState.ScreenInstance;
+            if (inst == null || MpMenuState.MpContainer == null)
+                return false;
+            if (!MpMenuState.InMpMenu)
+                EnterMpMenu(inst);
+            return MpMenuState.InMpMenu;
+        }
+
+        /// <summary>-1 = live data; otherwise show that phase with sample data.</summary>
+        internal static void TourPreviewPhase(int phase)
+        {
+            _preview = phase < 0 ? (Phase?)null : (Phase)phase;
+        }
+
+        internal static void TourCloseLobby()
+        {
+            _preview = null;
+            var inst = MpMenuState.ScreenInstance;
+            if (inst != null && MpMenuState.InMpMenu)
+                ExitMpMenu(inst, preserveConnection: true);
+        }
+
         static string Shorten(string s, int max)
         {
             return s.Length <= max ? s : s.Substring(0, max - 1) + "…";
@@ -986,16 +1073,23 @@ namespace CupheadOnline.Patches
             {
                 case Phase.NoSteam:
                 case Phase.Idle:
+                {
                     bool steam = phase != Phase.NoSteam;
+                    var partner = steam ? GetPartner() : new Partner();
+                    if (partner.Known)
+                        _rows.Add(LobbyRow.Action(RowPlayWith, "PLAY WITH " + PartnerLabel(partner), partner.Online));
                     if (steam && Plugin.Net.CanRetryLastAction)
                         _rows.Add(LobbyRow.Action(RowRetry, Plugin.Net.GetRetryActionLabel()));
                     _rows.Add(LobbyRow.Action(RowHost, "HOST A GAME", steam));
                     _rows.Add(LobbyRow.Action(RowJoin, "JOIN A GAME", steam));
                     color.GapBefore = true;
                     _rows.Add(color);
-                    _rows.Add(new LobbyRow { Id = RowBugReport, Label = "BUG REPORT", Enabled = true, GapBefore = true });
+                    if (UpdateChecker.UpdateAvailable)
+                        _rows.Add(new LobbyRow { Id = RowGetUpdate, Label = "GET v" + UpdateChecker.LatestVersion, Enabled = true, GapBefore = true });
+                    _rows.Add(new LobbyRow { Id = RowBugReport, Label = "BUG REPORT", Enabled = true, GapBefore = !UpdateChecker.UpdateAvailable });
                     _rows.Add(LobbyRow.Action(RowBack, "BACK"));
                     break;
+                }
 
                 case Phase.Busy:
                 case Phase.InLobby:
@@ -1010,8 +1104,16 @@ namespace CupheadOnline.Patches
                     break;
 
                 case Phase.HostingOpen:
-                    _rows.Add(LobbyRow.Action(RowInvite, "INVITE A FRIEND", Plugin.Net.CanInviteFriend));
-                    _rows.Add(LobbyRow.Action(RowCopyCode, "COPY LOBBY CODE", Plugin.Net.CanCopyLobbyId));
+                {
+                    // The preview has no real lobby; show the rows as a host would see them.
+                    bool canInvite = _preview.HasValue || Plugin.Net.CanInviteFriend;
+                    var partner = GetPartner();
+                    if (partner.Known && !Plugin.Net.IsInCurrentLobby(partner.Id))
+                        _rows.Add(LobbyRow.Action(RowInvitePartner, "INVITE " + PartnerLabel(partner),
+                            partner.Online && canInvite));
+                    _rows.Add(LobbyRow.Action(RowInvite, "INVITE A FRIEND", canInvite));
+                    _rows.Add(LobbyRow.Action(RowCopyCode, "COPY LOBBY CODE", _preview.HasValue || Plugin.Net.CanCopyLobbyId));
+                }
                     color.GapBefore = true;
                     _rows.Add(color);
                     _rows.Add(new LobbyRow { Id = RowCloseLobby, Label = "CLOSE LOBBY", Enabled = true, GapBefore = true });
@@ -1044,10 +1146,20 @@ namespace CupheadOnline.Patches
         {
             switch (phase)
             {
-                case Phase.Idle: return Plugin.Net != null && Plugin.Net.CanRetryLastAction ? RowRetry : RowHost;
+                case Phase.Idle:
+                {
+                    var partner = GetPartner();
+                    if (partner.Known && partner.Online) return RowPlayWith;
+                    return Plugin.Net != null && Plugin.Net.CanRetryLastAction ? RowRetry : RowHost;
+                }
                 case Phase.NoSteam: return RowBack;
                 case Phase.WaitingInvite: return RowOpenFriends;
-                case Phase.HostingOpen: return RowInvite;
+                case Phase.HostingOpen:
+                {
+                    var partner = GetPartner();
+                    return partner.Known && partner.Online && !Plugin.Net.IsInCurrentLobby(partner.Id)
+                        ? RowInvitePartner : RowInvite;
+                }
                 case Phase.HostConnected: return RowStart;
                 case Phase.GuestConnected: return RowColor;
                 default: return RowCancel;
@@ -1106,6 +1218,11 @@ namespace CupheadOnline.Patches
                     }
                     return "Connected! Waiting for the host to start" + Dots();
                 default:
+                    if (UpdateChecker.UpdateAvailable)
+                    {
+                        color = NativeUiKit.WarnInk;
+                        return "CupHeads v" + UpdateChecker.LatestVersion + " is out! Both players need it.";
+                    }
                     return "Play the whole adventure with a friend over Steam.";
             }
         }
@@ -1115,6 +1232,20 @@ namespace CupheadOnline.Patches
             string clipboardRaw, clipboardLobbyId;
             switch (id)
             {
+                case RowPlayWith:
+                case RowInvitePartner:
+                {
+                    var partner = GetPartner();
+                    if (!partner.Online)
+                        return partner.Name + " is offline right now.";
+                    string what = id == RowPlayWith
+                        ? "Opens a lobby and sends " + partner.Name + " an invite."
+                        : "Sends " + partner.Name + " an invite to this lobby.";
+                    return partner.InCuphead ? what + " They're in Cuphead now!" : what;
+                }
+                case RowGetUpdate:
+                    return "Opens the download page for v" + UpdateChecker.LatestVersion
+                        + " (you have v" + PluginInfo.VERSION + ").";
                 case RowHost:
                     return "Open a friends-only lobby, then invite someone to join you.";
                 case RowJoin:
@@ -1434,6 +1565,23 @@ namespace CupheadOnline.Patches
             string status;
             switch (id)
             {
+                case RowPlayWith:
+                    OnPlayWithPartner();
+                    break;
+                case RowInvitePartner:
+                {
+                    var partner = GetPartner();
+                    if (partner.Id != 0UL)
+                    {
+                        Plugin.Net.InviteFriendToLobby(partner.Id, out status);
+                        MpMenuState.SetStatus(status);
+                    }
+                    break;
+                }
+                case RowGetUpdate:
+                    Application.OpenURL(UpdateChecker.ReleasesPage);
+                    MpMenuState.SetStatus("Opened the download page in your browser.");
+                    break;
                 case RowHost:
                     OnHostGame();
                     break;
@@ -1680,6 +1828,26 @@ namespace CupheadOnline.Patches
             Plugin.SetPreferredPlayerColorSelection(nextSelection);
             if (Plugin.Net != null)
                 Plugin.Net.NotifyLocalAppearanceChanged();
+        }
+
+        static void OnPlayWithPartner()
+        {
+            var partner = GetPartner();
+            if (partner.Id == 0UL)
+            {
+                OnHostGame();
+                return;
+            }
+
+            if (!Plugin.Net.StartHostAndInvite(partner.Id))
+            {
+                MpMenuState.InputLocked = false;
+                MpMenuState.SetStatus(Plugin.Net.SteamUnavailableStatus);
+                return;
+            }
+
+            MpMenuState.InputLocked = true;
+            MpMenuState.SetStatus("Opening a lobby for you and " + partner.Name, animate: true);
         }
 
         static void OnHostGame()

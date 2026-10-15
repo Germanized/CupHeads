@@ -54,7 +54,10 @@ namespace CupheadOnline.UI
         const float RowStep = 39f;
         const float RowsTop = 56f;
         const float RowsCentre = -44f;
-        const int MaxRows = 7;
+        const int MaxRows = 8;
+        // Space between the status line and the hint that the menu may use.
+        const float RowsAvailable = 262f;
+        const float MinRowStep = 31f;
         const int RowFontSize = 30;
 
         public GameObject Root { get; private set; }
@@ -258,11 +261,15 @@ namespace CupheadOnline.UI
             int count = rows == null ? 0 : Mathf.Min(rows.Count, MaxRows);
 
             // Centre the block between the status line and the hint, so a short
-            // menu does not leave a hole under it.
-            float height = 0f;
-            for (int i = 0; i < count; i++)
-                height += RowStep + (rows[i].GapBefore && i > 0 ? RowStep * 0.45f : 0f);
-            float y = Mathf.Min(RowsTop, RowsCentre + height * 0.5f - RowStep * 0.5f);
+            // menu does not leave a hole under it; tighten a long one to fit.
+            int gaps = 0;
+            for (int i = 1; i < count; i++)
+                if (rows[i].GapBefore) gaps++;
+            float step = RowStep;
+            if (count > 0 && count * step + gaps * step * 0.45f > RowsAvailable)
+                step = Mathf.Max(MinRowStep, RowsAvailable / (count + gaps * 0.45f));
+            float height = count * step + gaps * step * 0.45f;
+            float y = Mathf.Min(RowsTop, RowsCentre + height * 0.5f - step * 0.5f);
             for (int i = 0; i < MaxRows; i++)
             {
                 var view = _rows[i];
@@ -274,11 +281,11 @@ namespace CupheadOnline.UI
 
                 var row = rows[i];
                 if (row.GapBefore && i > 0)
-                    y -= RowStep * 0.45f;
+                    y -= step * 0.45f;
 
                 if (!view.Go.activeSelf) view.Go.SetActive(true);
                 ((RectTransform)view.Go.transform).anchoredPosition = new Vector2(0f, y);
-                y -= RowStep;
+                y -= step;
 
                 bool isSelected = i == selected;
                 Color main = !row.Enabled

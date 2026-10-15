@@ -57,6 +57,7 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 * Battle Assist HUD with fight timer, deaths, retries, parries, and optional boss HP multiplier readout
 * QoL hotkeys:
 
+  * `F1` shortcuts card (lists all of these in game)
   * `F6` quick resync
   * `F7` boss health bars
   * `F8` session panel
@@ -75,6 +76,13 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 * Multiplayer lobby laid out like the Options card: two player seats styled as selected saves (Cuphead red / Mugman green) with names and ping, a status line, a hint for the selected item, and a menu that only lists what you can do right now
 * Host's choices as native pickers: `SAVE FILE` (shown like the save screen, e.g. "MUGMAN A - 2%, Inkwell Isle Two"), `YOU PLAY`, and `COLOR`, then `START!`
 * Back is never destructive in a session: it moves to LEAVE / CLOSE LOBBY first, and leaving keeps you in the lobby screen
+* `PLAY WITH <name>`: the lobby remembers the last person you played with and shows whether they're online or already in Cuphead; one press opens a lobby and sends them an invite directly (no Steam overlay). While hosting, `INVITE <name>` does the same
+* Steam invites work from anywhere: accept one in Steam chat or use "Join Game" on the friends list, even with Cuphead closed (Steam launches it with the invite). The join waits until your save slots are loaded, then the lobby opens by itself
+* Update notice: the main menu and lobby say when a newer CupHeads release is out, with a `GET vX.Y.Z` button that opens the download page (`[Updates] CheckForUpdates`)
+* Save backups: your Cuphead saves are copied to `BepInEx/CupHeads/SaveBackups/` when an online session starts (the newest 10 are kept, `[Saves]` settings)
+* The game keeps running while alt-tabbed during an online session, so your partner doesn't freeze or time out
+* Switch input any time: online, press a button on any controller and it's yours; offline, a spare controller goes to Player One while they're on the keyboard and nobody has joined as Player Two. The keyboard keeps working alongside (`[Controls] SwitchInputAnytime`)
+* `[UI] AlwaysShowConnectionTag` keeps the partner / ping tag visible all session
 * Comm wheel strip and message slips printed on the same paper cards
 * Team results card on the knockout screen with both players' deaths, parries, and retries
 * Lets a knocked-out player steer their revive ghost sideways while waiting for a parry-revive
@@ -198,8 +206,8 @@ BepInEx/config/com.cupheadonline.mod.cfg
 
 ## Multiplayer start flow
 
-1. Host opens `MULTIPLAYER`, picks `HOST A GAME`, then `INVITE A FRIEND` (or `COPY LOBBY CODE`).
-2. The friend opens `MULTIPLAYER` and picks `JOIN A GAME` to accept the Steam invite (or to join the code on their clipboard).
+1. Host opens `MULTIPLAYER`, picks `HOST A GAME`, then `INVITE A FRIEND` (or `COPY LOBBY CODE`). After you've played together once, `PLAY WITH <name>` does all of this in one press.
+2. The friend accepts the Steam invite (from the overlay, Steam chat, or the friends list, even before starting Cuphead), or opens `MULTIPLAYER` and picks `JOIN A GAME`. The lobby opens by itself once their saves are loaded.
 3. Once connected, the host picks `SAVE FILE` and `YOU PLAY` with left / right.
 4. The guest stays in the lobby and follows the host automatically.
 5. The host presses `START!` to launch the run.
@@ -244,6 +252,14 @@ Two Cuphead windows on one Steam account are not a reliable proof of Steam P2P b
 Use two Windows users, two Steam accounts, or a second PC for real P2P testing.
 
 If Dev Lab fails to spawn or control Player Two, the bug is likely in local spawn/input routing. If Dev Lab works but Steam multiplayer fails, the bug is more likely related to lobby handling, packets, or scene sync.
+
+## UI developer tools
+
+These stay off unless a flag file exists in `BepInEx/config/`:
+
+* `cupheads-uitour.flag`: the game drives itself through every CupHeads screen (main menu, shortcuts card, the lobby in each phase with sample data, the in-game overlays), saves a screenshot of each from its own renderer to `BepInEx/CupHeadsUiTour/`, and quits. It uses no keyboard or mouse input, runs muted in a 1280x720 window, keeps rendering in the background, and skips the intro video, so the PC stays usable. Unity remembers the window mode on exit, so restore your display settings afterwards (or run the tour from a script that saves and restores the `Screenmanager` values under `HKCU\Software\Studio MDHR\Cuphead`).
+* `cupheads-uipreview.flag`: in the lobby, `Insert` steps through every lobby phase with sample data; `Home` shows the in-game overlays and then the results card.
+* `cupheads-uidump.flag`: dumps the save-select scene's UI hierarchy and exports its sprites to `BepInEx/CupHeadsUiDump/`.
 
 ## Authority model
 

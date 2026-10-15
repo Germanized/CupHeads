@@ -15,6 +15,13 @@ namespace CupheadOnline.UI
             if (Time.unscaledTime - _lastHotkeyAt < 0.12f)
                 return;
 
+            if (Input.GetKeyDown(KeyCode.F1))
+            {
+                _lastHotkeyAt = Time.unscaledTime;
+                ShortcutsCard.Toggle();
+                return;
+            }
+
             if (Input.GetKeyDown(KeyCode.F6))
             {
                 _lastHotkeyAt = Time.unscaledTime;

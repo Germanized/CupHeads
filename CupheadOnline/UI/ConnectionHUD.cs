@@ -180,7 +180,7 @@ namespace CupheadOnline.UI
                 && (now < _messageUntil
                     || (_disconnected && now < _disconnectedUntil)
                     || laggy || desync
-                    || (connected && now < _introUntil)));
+                    || (connected && (now < _introUntil || Plugin.AlwaysShowConnectionTag))));
 
             _alpha = Mathf.MoveTowards(_alpha, show ? 1f : 0f, Time.unscaledDeltaTime * (show ? 6f : 2.5f));
             _group.alpha = _alpha;

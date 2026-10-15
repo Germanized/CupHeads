@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.6.1 - 2026-10-15
+
+Quality of life. Wire protocol is still 4, so 1.6.1 plays with 1.5.x and 1.6.0.
+
+### Fixes
+
+- A guest who accepted an invite before Cuphead had loaded the saves (on the title screen, or by launching the game from an invite) connected with empty save slots in memory. The save mirror recorded those empty slots as the guest's "originals" and put them back after the session, where the next save could write them over the guest's real progress. Joins now wait until the save slots are loaded, and the save mirror refuses to take a snapshot or apply a mirror before then.
+- Cuphead stops running while its window is unfocused, so alt-tabbing during a session froze that player's game for both players and could time the session out. The game now keeps running while alt-tabbed during an online lobby or session, and the original setting comes back afterwards.
+
+### New
+
+- PLAY WITH <name>: the lobby remembers the last person you played with and shows whether they are online or already in Cuphead. One press opens a lobby and invites them directly, with no Steam overlay. While hosting, INVITE <name> sends them an invite.
+- Steam invites from anywhere: accepting an invite in Steam chat or using "Join Game" on the friends list works from any screen, and launching Cuphead from an invite while it is closed (Steam's `+connect_lobby`) now joins too. The lobby opens by itself on the main menu.
+- Update notice: once per launch the mod checks GitHub for a newer release. The main menu footer and the lobby say when one is out, and GET vX.Y.Z opens the download page. Turn off with `[Updates] CheckForUpdates = false`.
+- Save backups: when an online session starts, your save files are copied to `BepInEx/CupHeads/SaveBackups/<date-time>/` (unchanged saves are not copied again; the newest 10 are kept).
+- Switch between keyboard and controller at any time. Cuphead gives Player One only the device that pressed a button on the title screen and keeps every other controller for a Player Two join, so someone who started on the keyboard could never pick up a controller later (and online the spare controller did nothing). Now, online, pressing a button on any controller hands it to you; offline, a spare controller goes to Player One while Player One is on the keyboard and nobody has joined as Player Two (a second controller still lets a couch Player Two join). The keyboard keeps working alongside, and the button prompts follow the device used last. Runs just before the game's own join check, so the same press never also starts a join. `[Controls] SwitchInputAnytime`.
+- F1 shows a card listing every CupHeads shortcut. The main menu footer mentions it.
+- `[UI] AlwaysShowConnectionTag` keeps the partner / ping tag up for the whole session.
+
 ## v1.6.0 - 2026-10-15
 
 The multiplayer screens, rebuilt out of Cuphead's own UI. Wire protocol is still 4, so 1.6.0 plays with 1.5.x.

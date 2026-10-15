@@ -21,6 +21,8 @@ namespace CupheadOnline.UI
         public const string PartnerCharacter = "Mugman";
         public const int Ping = 42;
 
+        internal static bool FlagPresent => Enabled || Diagnostics.UiTour.Active;
+
         static bool Enabled
         {
             get
@@ -40,7 +42,13 @@ namespace CupheadOnline.UI
                 return;
 
             // off → fight overlays → results card → off
-            _step = (_step + 1) % 3;
+            SetStep((_step + 1) % 3);
+        }
+
+        /// <summary>0 = off, 1 = fight overlays, 2 = results card.</summary>
+        public static void SetStep(int step)
+        {
+            _step = step;
             Overlays = _step == 1;
             Plugin.Log.LogInfo("[UiPreview] Step " + _step);
             if (_step == 1)

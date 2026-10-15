@@ -268,6 +268,12 @@ namespace CupheadOnline.Sync
             if (_pendingMirror == null || !GuestSession)
                 return;
 
+            // Never before this player's own saves are loaded: the originals
+            // snapshotted below would be empty slots, and restoring those after
+            // the session could later be saved over the real progress.
+            if (!PlayerData.Initialized)
+                return;
+
             // Swapping the data under an open shop or equip menu would pull the
             // inventory those screens are showing; wait until they close.
             if (!force && !IsSafeToSwap())
@@ -410,7 +416,7 @@ namespace CupheadOnline.Sync
         static void OnSessionStarted()
         {
             ResetTransfers();
-            if (GuestSession && !_hasOriginals)
+            if (GuestSession && !_hasOriginals && PlayerData.Initialized)
                 SnapshotOriginals();
         }
 

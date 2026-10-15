@@ -233,6 +233,86 @@ namespace CupheadOnline.Net
             return true;
         }
 
+        // ── Direct invites (no overlay) ───────────────────────────────────────
+
+        /// <summary>Hosts a lobby and invites this friend as soon as it exists.</summary>
+        public bool StartHostAndInvite(ulong friendSteamId)
+        {
+            if (!StartHost())
+                return false;
+            // StartHost resets state first; the lobby is created asynchronously.
+            _pendingDirectInvite = new CSteamID(friendSteamId);
+            return true;
+        }
+
+        /// <summary>Sends a Steam lobby invite straight to a friend.</summary>
+        public bool InviteFriendToLobby(ulong friendSteamId, out string status)
+        {
+            status = string.Empty;
+            if (!EnsureSteamReady())
+            {
+                status = _steamUnavailableStatus;
+                return false;
+            }
+            if (!_isHost || _lobbyId == CSteamID.Nil)
+            {
+                status = "Host a lobby first, then invite a friend.";
+                return false;
+            }
+
+            var friend = new CSteamID(friendSteamId);
+            string name = FriendName(friend);
+            bool sent;
+            try { sent = SteamMatchmaking.InviteUserToLobby(_lobbyId, friend); }
+            catch { sent = false; }
+
+            status = sent
+                ? "Invite sent to " + name + "! Waiting for them to accept."
+                : "Could not invite " + name + ". Try INVITE A FRIEND instead.";
+            Plugin.Log.LogInfo("[SteamNet] Direct invite to " + name + (sent ? " sent." : " failed."));
+            return sent;
+        }
+
+        /// <summary>
+        /// A Steam friend's name and presence. False if they are not on the
+        /// friends list (or Steam is unavailable).
+        /// </summary>
+        public bool TryGetFriendPresence(ulong friendSteamId, out string name, out bool online, out bool inCuphead)
+        {
+            name = string.Empty;
+            online = false;
+            inCuphead = false;
+            if (!_steamReady || friendSteamId == 0UL)
+                return false;
+
+            try
+            {
+                var friend = new CSteamID(friendSteamId);
+                if (SteamFriends.GetFriendRelationship(friend) != EFriendRelationship.k_EFriendRelationshipFriend)
+                    return false;
+
+                name = SteamFriends.GetFriendPersonaName(friend);
+                online = SteamFriends.GetFriendPersonaState(friend) != EPersonaState.k_EPersonaStateOffline;
+                FriendGameInfo_t game;
+                if (SteamFriends.GetFriendGamePlayed(friend, out game))
+                    inCuphead = game.m_gameID.AppID() == SteamUtils.GetAppID();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>True while this friend is a member of our current lobby.</summary>
+        public bool IsInCurrentLobby(ulong steamId)
+        {
+            if (!_steamReady || _lobbyId == CSteamID.Nil || steamId == 0UL)
+                return false;
+            try { return IsLobbyMember(new CSteamID(steamId)); }
+            catch { return false; }
+        }
+
         public bool TryRetryLastAction(out string status)
         {
             status = string.Empty;
@@ -424,6 +504,7 @@ namespace CupheadOnline.Net
         CSteamID    _lastRetryLobbyId = CSteamID.Nil;
         string      _lastRetryPeerName = string.Empty;
         bool        _lastDisconnectWasConnected;
+        CSteamID    _pendingDirectInvite = CSteamID.Nil;
 
         // ── Callbacks (hold references — prevent GC) ──────────────────────────
         Callback<P2PSessionRequest_t>      _cbP2PReq;
@@ -576,6 +657,15 @@ namespace CupheadOnline.Net
             SetState(NetState.WaitingInLobby, waitStatus);
             Plugin.Log.LogInfo("[SteamNet] Lobby: " + _lobbyId);
             string inviteStatus;
+            if (_pendingDirectInvite != CSteamID.Nil)
+            {
+                // "Play with <partner>": invite them directly, no overlay.
+                ulong friend = _pendingDirectInvite.m_SteamID;
+                _pendingDirectInvite = CSteamID.Nil;
+                InviteFriendToLobby(friend, out inviteStatus);
+                FireStatus(inviteStatus);
+                return;
+            }
             if (!OpenInviteDialog(out inviteStatus))
                 FireStatus(inviteStatus);
         }
@@ -656,14 +746,17 @@ namespace CupheadOnline.Net
             return true;
         }
 
-        // Thread-safe wrapper — Steam callback may arrive on any thread
+        // Thread-safe wrapper — Steam callback may arrive on any thread.
+        // An accepted invite (or "Join Game" from the friends list) goes through
+        // InviteRouter, which only joins once the local saves are loaded.
         void OnLobbyJoinRequestedRaw(GameLobbyJoinRequested_t req)
         {
             var id = req.m_steamIDLobby;
+            var from = req.m_steamIDFriend;
             MainThreadQueue.Enqueue(() =>
             {
-                Plugin.Log.LogInfo("[SteamNet] Invite accepted — joining " + id);
-                JoinLobby(id);
+                Plugin.Log.LogInfo("[SteamNet] Invite accepted for lobby " + id);
+                InviteRouter.OnInviteAccepted(id.m_SteamID, FriendName(from));
             });
         }
 
@@ -761,6 +854,11 @@ namespace CupheadOnline.Net
                     : "Connected.\nWaiting for the host to choose a save slot.");
 
             ConnectionHUD.Show("Connected - " + (_isHost ? BuildCurrentPeerSummary() : name));
+
+            // Remember who we played with for "PLAY WITH <name>" next time.
+            CSteamID partner = _isHost ? connectedPeer : _peerId;
+            if (partner != CSteamID.Nil && (!_isHost || partner == _peerId))
+                Plugin.RememberPartner(partner.m_SteamID, FriendName(partner));
 
             // OnConnected also sends the host's recovery bundle (save, scene,
             // RNG seed, enemy burst) to the newly connected guest.
@@ -1639,6 +1737,7 @@ namespace CupheadOnline.Net
             }
             _peerId          = CSteamID.Nil;
             _lobbyId         = CSteamID.Nil;
+            _pendingDirectInvite = CSteamID.Nil;
             _pingSentPending = false;
             _isHost          = false;
             Latency          = 0;
