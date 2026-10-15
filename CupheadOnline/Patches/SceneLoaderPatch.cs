@@ -14,6 +14,9 @@ namespace CupheadOnline.Patches
 
         internal static void ResetTransientSyncState()
         {
+            LevelReadyGate.OnSceneLoadStarted();
+            LevelOutcomeSync.OnSceneChanged();
+            PauseSync.OnSceneChanged();
             EnemySyncManager.Reset();
             DamageAuthority.ResetAll();
             ParticipantReviveController.Reset();
@@ -76,8 +79,20 @@ namespace CupheadOnline.Patches
         typeof(Levels), typeof(SceneLoader.Transition), typeof(SceneLoader.Icon), typeof(SceneLoader.Context))]
     public static class SceneLoaderLevelsPatch
     {
-        static bool Prefix(Levels level)
+        static bool Prefix(
+            Levels level,
+            SceneLoader.Transition transitionStart,
+            SceneLoader.Icon icon,
+            SceneLoader.Context context,
+            out bool __state)
         {
+            __state = false;
+
+            // The game ignores load requests while a load is already running;
+            // do not broadcast or wipe sync state for a request that won't happen.
+            if (SceneLoader.CurrentlyLoading)
+                return true;
+
             if (!SceneSyncState.CanStartSceneLoadAsThisPeer("level " + level))
                 return false;
 
@@ -89,19 +104,24 @@ namespace CupheadOnline.Patches
             if (Plugin.Net == null || !Plugin.Net.IsConnected) return true;
 
             SceneSyncState.SuppressMenuSceneBroadcast = true;
+            __state = true;
 
             var pkt = new SceneChangePacket
             {
-                LevelEnum = (int)level,
-                RngSeed   = RngSync.NextSeed(),
+                LevelEnum       = (int)level,
+                RngSeed         = RngSync.NextSeed(),
+                TransitionStart = (byte)transitionStart,
+                Icon            = (byte)icon,
+                ContextKind     = SceneContextCodec.Encode(context),
             };
             Plugin.Net.SendSceneChange(ref pkt);
             return true;
         }
 
-        static void Postfix()
+        static void Postfix(bool __state)
         {
-            SceneSyncState.SuppressMenuSceneBroadcast = false;
+            if (__state)
+                SceneSyncState.SuppressMenuSceneBroadcast = false;
         }
     }
 
@@ -113,8 +133,12 @@ namespace CupheadOnline.Patches
             Scenes scene,
             SceneLoader.Transition transitionStart,
             SceneLoader.Transition transitionEnd,
-            SceneLoader.Icon icon)
+            SceneLoader.Icon icon,
+            SceneLoader.Context context)
         {
+            if (SceneLoader.CurrentlyLoading)
+                return true;
+
             if (!SceneSyncState.CanStartSceneLoadAsThisPeer("scene " + scene))
                 return false;
 
@@ -133,6 +157,8 @@ namespace CupheadOnline.Patches
                 TransitionEnd   = (byte)transitionEnd,
                 Icon            = (byte)icon,
                 RngSeed         = RngSync.NextSeed(),
+                CurrentLevel    = (int)SceneLoader.CurrentLevel,
+                ContextKind     = SceneContextCodec.Encode(context),
             };
             Plugin.Net.SendMenuSceneChange(ref pkt);
             return true;

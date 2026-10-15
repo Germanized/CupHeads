@@ -14,7 +14,7 @@ namespace CupheadOnline.Sync
     /// </summary>
     public static class LocalDevSession
     {
-        static uint _inputTick = 1;
+        static readonly InputFrameBuilder InputBuilder = new InputFrameBuilder();
 
         public static bool IsActive { get; private set; }
 
@@ -63,7 +63,7 @@ namespace CupheadOnline.Sync
             }
 
             IsActive = true;
-            _inputTick = 1;
+            InputBuilder.Reset();
             MultiplayerSession.StartAsHost();
             MultiplayerSession.EnsureCupheadMultiplayerState();
             RemoteInputDriver.Reset(PlayerId.PlayerTwo);
@@ -133,29 +133,14 @@ namespace CupheadOnline.Sync
 
             MultiplayerSession.EnsureCupheadMultiplayerState();
 
-            var input = UniversalInputRouter.BuildLocalInputFrameForPlayer(PlayerId.PlayerTwo);
-            input.Tick = NextInputTick();
+            var input = InputBuilder.Build(PlayerId.PlayerTwo, muted: false);
             RemoteInputDriver.Apply(PlayerId.PlayerTwo, input);
-        }
-
-        static uint NextInputTick()
-        {
-            unchecked
-            {
-                uint next = _inputTick++;
-                if (next == 0)
-                {
-                    _inputTick = 1;
-                    next = _inputTick++;
-                }
-                return next;
-            }
         }
 
         static void Reset()
         {
             IsActive = false;
-            _inputTick = 1;
+            InputBuilder.Reset();
         }
     }
 }

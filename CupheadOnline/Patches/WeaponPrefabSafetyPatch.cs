@@ -8,17 +8,15 @@ namespace CupheadOnline.Patches
     [HarmonyPatch(typeof(LevelPlayerWeaponManager.WeaponPrefabs), "GetWeapon")]
     public static class WeaponPrefabGetWeaponFallbackPatch
     {
-        static readonly FieldInfo WeaponsField =
-            AccessTools.Field(typeof(LevelPlayerWeaponManager.WeaponPrefabs), "weapons");
+        // GetWeapon runs on every shot; a field-ref delegate avoids per-call reflection.
+        static readonly AccessTools.FieldRef<LevelPlayerWeaponManager.WeaponPrefabs, Dictionary<Weapon, AbstractLevelWeapon>> WeaponsRef =
+            SafeAccess.FieldRef<LevelPlayerWeaponManager.WeaponPrefabs, Dictionary<Weapon, AbstractLevelWeapon>>("weapons");
 
         static readonly HashSet<int> WarnedWeaponIds = new HashSet<int>();
 
         static bool Prefix(LevelPlayerWeaponManager.WeaponPrefabs __instance, Weapon weapon, ref AbstractLevelWeapon __result)
         {
-            var weapons = WeaponsField == null
-                ? null
-                : WeaponsField.GetValue(__instance) as Dictionary<Weapon, AbstractLevelWeapon>;
-
+            var weapons = __instance != null && WeaponsRef != null ? WeaponsRef(__instance) : null;
             if (weapons == null)
                 return true;
 

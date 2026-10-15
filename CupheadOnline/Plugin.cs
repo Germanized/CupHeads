@@ -51,6 +51,7 @@ namespace CupheadOnline
         static ConfigEntry<bool> _cfgEnableWinStatsCard;
         static ConfigEntry<bool> _cfgEnableGhostDrift;
         static ConfigEntry<bool> _cfgEnableRemoteShotTracers;
+        static ConfigEntry<bool> _cfgEnableSharedPause;
         static ConfigEntry<string> _cfgEnemySyncExcludeNames;
 
         public static bool ShowConnectionHud => _cfgShowConnectionHud == null || _cfgShowConnectionHud.Value;
@@ -82,6 +83,7 @@ namespace CupheadOnline
         public static bool EnableWinStatsCard => _cfgEnableWinStatsCard == null || _cfgEnableWinStatsCard.Value;
         public static bool EnableGhostDrift => _cfgEnableGhostDrift == null || _cfgEnableGhostDrift.Value;
         public static bool EnableRemoteShotTracers => _cfgEnableRemoteShotTracers == null || _cfgEnableRemoteShotTracers.Value;
+        public static bool EnableSharedPause => _cfgEnableSharedPause == null || _cfgEnableSharedPause.Value;
         public static string EnemySyncExcludeNames =>
             _cfgEnemySyncExcludeNames == null ? string.Empty : _cfgEnemySyncExcludeNames.Value;
         public static int FailedPatchCount => _failedPatchNames.Count;
@@ -147,7 +149,9 @@ namespace CupheadOnline
             _cfgEnableGhostDrift = Config.Bind("Gameplay", "EnableGhostDrift", true,
                 "Let a knocked-out player steer their revive ghost sideways with their movement axis.");
             _cfgEnableRemoteShotTracers = Config.Bind("UI", "EnableRemoteShotTracers", true,
-                "Draw visual-only tracer streaks for the other player's shots on the non-simulating side.");
+                "Draw visual-only tracer streaks for extra (3rd+) participants' shots. The other built-in player's real shots are always visible.");
+            _cfgEnableSharedPause = Config.Bind("Networking", "EnableSharedPause", true,
+                "When either player opens the pause menu inside a level, freeze both games (like local co-op) so the fight stays in sync.");
 
             // Networking manager — Steam P2P transport (lobby + invite flow)
             Net = new SteamNetManager();
@@ -193,7 +197,6 @@ namespace CupheadOnline
 
             // Player lifecycle
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerManagerAwakePatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputInitPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(MapAwakePatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(MapCreatePlayersPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerLevelInitPatch));
@@ -255,9 +258,6 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(RewiredPlayerGetButtonDownPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(RewiredPlayerGetButtonUpPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(CupheadInputDisplayForButtonPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputAxisPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputAxisIntPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerInputButtonPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(ParryPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(WeaponPrefabGetWeaponFallbackPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(AbstractEquipUICloseOnlinePatch));
@@ -273,9 +273,15 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(SceneLoaderRetryStatsPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(LevelPlayerParryStatsPatch));
 
+            // Level lifecycle: shared knockout and shared pause
+            PatchTracked(harmony, registeredPatchTypes, typeof(LevelWinGatePatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PauseGuiPauseGameplayPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PauseGuiUnpauseGameplayPatch));
+
             // Deterministic RNG
             PatchTracked(harmony, registeredPatchTypes, typeof(RandPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(RandIntPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(LevelAwakeSeedPatch));
 
             AuditPatchCoverage(registeredPatchTypes);
 
@@ -288,6 +294,7 @@ namespace CupheadOnline
             }
 
             Log.LogInfo("[Plugin] Patch pass complete.");
+            BuildTickTable();
             SessionPausePanel.Ensure();
             LocalDevMenu.Ensure();
         }
@@ -332,10 +339,7 @@ namespace CupheadOnline
         {
             try
             {
-                var ignoredTypes = new HashSet<string>
-                {
-                    nameof(MainMenuPatch),
-                };
+                var ignoredTypes = new HashSet<string>();
 
                 var types = Assembly.GetExecutingAssembly().GetTypes();
                 foreach (var type in types)
@@ -358,39 +362,97 @@ namespace CupheadOnline
             }
         }
 
+        sealed class TickEntry
+        {
+            public string Name;
+            public Action Run;
+            public int Failures;
+            public float LastLoggedAt = -100f;
+        }
+
+        static TickEntry[] _ticks = new TickEntry[0];
+
+        /// <summary>
+        /// Every per-frame subsystem runs in its own guard: one subsystem
+        /// throwing (a game update, an odd scene) is logged with a rate limit
+        /// and the rest of the frame — networking above all — keeps running.
+        /// </summary>
+        static void BuildTickTable()
+        {
+            var ticks = new List<TickEntry>();
+            Action<string, Action> add = (name, run) => ticks.Add(new TickEntry { Name = name, Run = run });
+
+            add("MainThreadQueue", MainThreadQueue.Drain);
+            add("SteamNet", () => { if (Net != null) Net.Poll(); });
+            add("SessionState", MultiplayerSession.EnsureCupheadMultiplayerState);
+            add("LocalDevSession", LocalDevSession.Update);
+            add("InputPump", ClientInputFramePump.Update);
+            add("LoadoutReplicator", LoadoutReplicator.Update);
+            add("EnemySync", EnemySyncManager.HostTick);
+            add("ExtraAvatars", ExtraRemoteAvatarManager.Update);
+            add("ExtraDamageBridge", ExtraParticipantDamageBridge.Update);
+            add("ExtraTracker", ExtraParticipantTracker.Update);
+            add("ExtraReviveVisuals", ExtraParticipantReviveVisuals.Update);
+            add("PlayerColors", PlayerColorSync.Update);
+            add("Hotkeys", QoLHotkeys.Tick);
+            add("BossHpScaler", BossHealthScaler.Update);
+            add("BossHealthBars", BossHealthBarOverlay.Tick);
+            add("BattleAssistHud", BattleAssistHud.Tick);
+            add("SessionSync", SessionSync.Update);
+            add("LevelReadyGate", LevelReadyGate.Update);
+            add("LevelOutcome", LevelOutcomeSync.Update);
+            add("PauseSync", PauseSync.Update);
+            add("DesyncSentinel", DesyncSentinel.Update);
+            add("ShotTracers", RemoteShotTracer.Update);
+            add("GhostDrift", GhostDriftController.Update);
+            add("CommWheel", CommWheel.Tick);
+            add("WinStatsCard", WinStatsCard.Tick);
+            add("PatchHealthNotice", PatchHealthNotice.Tick);
+            add("SessionPausePanel", SessionPausePanel.Ensure);
+
+            _ticks = ticks.ToArray();
+        }
+
         void Update()
         {
-            MainThreadQueue.Drain();
-            Net?.Poll();
-            MultiplayerSession.EnsureCupheadMultiplayerState();
-            LocalDevSession.Update();
-            ClientInputFramePump.Update();
-            LoadoutReplicator.Update();
-            EnemySyncManager.HostTick();
-            ExtraRemoteAvatarManager.Update();
-            ExtraParticipantDamageBridge.Update();
-            ExtraParticipantTracker.Update();
-            ExtraParticipantReviveVisuals.Update();
-            PlayerColorSync.Update();
-            QoLHotkeys.Tick();
-            BossHealthScaler.Update();
-            BossHealthBarOverlay.Tick();
-            BattleAssistHud.Tick();
-            SessionSync.Update();
-            LevelReadyGate.Update();
-            DesyncSentinel.Update();
-            RemoteShotTracer.Update();
-            GhostDriftController.Update();
-            CommWheel.Tick();
-            WinStatsCard.Tick();
-            PatchHealthNotice.Tick();
-            SessionPausePanel.Ensure();
+            var ticks = _ticks;
+            for (int i = 0; i < ticks.Length; i++)
+            {
+                var tick = ticks[i];
+                try
+                {
+                    tick.Run();
+                }
+                catch (Exception ex)
+                {
+                    tick.Failures++;
+                    float now = Time.realtimeSinceStartup;
+                    if (now - tick.LastLoggedAt > 5f)
+                    {
+                        tick.LastLoggedAt = now;
+                        Log.LogError("[Plugin] " + tick.Name + " failed (" + tick.Failures + " total): " + ex);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// The session tick advances once per physics step for as long as a
+        /// session runs, independent of which players are alive. (It used to be
+        /// driven by the local player's motor, so it froze whenever the local
+        /// player died — and every stale-packet filter keyed on it then rejected
+        /// all further state, rubber-banding the partner and freezing enemies.)
+        /// </summary>
+        void FixedUpdate()
+        {
+            if (MultiplayerSession.IsActive)
+                MultiplayerSession.IncrementTick();
         }
 
         void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            UI.MultiplayerMenuInjector.ResetOnSceneChange();
             LevelReadyGate.OnSceneChanged();
+            PauseSync.OnSceneChanged();
             WinStatsCard.OnSceneLoaded(scene.name);
         }
 
@@ -481,6 +543,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.4.0";
+        public const string VERSION = "1.5.0";
     }
 }

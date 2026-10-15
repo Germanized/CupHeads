@@ -27,12 +27,37 @@ namespace CupheadOnline.Sync
 
         public static void SetSeed(uint seed)
         {
+            bool changed = !IsSeeded || seed != CurrentSeed;
             CurrentSeed = seed;
+            ResetStream(seed);
+            IsSeeded = true;
+            if (changed)
+                Plugin.Log.LogInfo($"[RngSync] Seeded with {seed:X8}");
+        }
+
+        /// <summary>
+        /// Called as a level's scene comes up (Level.Awake) on both peers. Most
+        /// boss behaviour rolls UnityEngine.Random directly, so seeding Unity's
+        /// generator with the shared scene seed here makes both machines pick
+        /// the same opening patterns, and restarting the Rand stream keeps the
+        /// game's own coin flips aligned from the same point.
+        /// </summary>
+        public static void SeedLevelStart(int levelEnum)
+        {
+            if (!IsSeeded)
+                return;
+
+            uint mixed = unchecked(CurrentSeed ^ (uint)levelEnum * 0x9E3779B1u);
+            UnityEngine.Random.InitState(unchecked((int)mixed));
+            ResetStream(CurrentSeed);
+            Plugin.Log.LogInfo($"[RngSync] Level {levelEnum} seeded from {CurrentSeed:X8}.");
+        }
+
+        static void ResetStream(uint seed)
+        {
             // SplitMix64 to expand the 32-bit seed into two 64-bit states
             _s0 = SplitMix64((ulong)seed);
             _s1 = SplitMix64(_s0);
-            IsSeeded = true;
-            Plugin.Log.LogInfo($"[RngSync] Seeded with {seed:X8}");
         }
 
         /// <summary>
@@ -42,10 +67,19 @@ namespace CupheadOnline.Sync
         /// </summary>
         public static uint NextSeed()
         {
-            var seed = (uint)(DateTime.UtcNow.Ticks ^ System.Diagnostics.Process.GetCurrentProcess().Id);
-            SetSeed(seed);
-            return seed;
+            unchecked
+            {
+                _seedCounter++;
+                ulong mixed = SplitMix64((ulong)DateTime.UtcNow.Ticks ^ ((ulong)_seedCounter << 32));
+                var seed = (uint)(mixed ^ (mixed >> 32));
+                if (seed == 0u)
+                    seed = 0x6C8E9CF5u;
+                SetSeed(seed);
+                return seed;
+            }
         }
+
+        static uint _seedCounter;
 
         // ──────────────────────────────────────────────────────────────────────
         //  Generation

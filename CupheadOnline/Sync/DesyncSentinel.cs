@@ -13,7 +13,10 @@ namespace CupheadOnline.Sync
     public static class DesyncSentinel
     {
         const float SAMPLE_INTERVAL = 2f;
-        const float POSITION_TOLERANCE = 5f;
+        // The guest renders the host's player a round trip plus a jitter
+        // buffer behind (dashes cover 1000+ units/s), so only a gap that no
+        // amount of lag explains counts as divergence. World units are pixels.
+        const float POSITION_TOLERANCE = 260f;
         const float BOSS_HP_TOLERANCE_ABS = 60f;
         const float BOSS_HP_TOLERANCE_PCT = 0.08f;
         const int STRIKES_TO_ACT = 2;

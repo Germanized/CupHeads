@@ -11,7 +11,7 @@ namespace CupheadOnline.UI
     /// - MenuFont resolves one of the game's own loaded fonts (Vogue / Memphis /
     ///   Felix / Primer) at runtime, falling back to Arial only when nothing else
     ///   is loaded yet. Panels can call RefreshLabelFonts each frame cheaply; the
-    ///   lookup result is cached.
+    ///   lookup and the per-panel label scan are both cached.
     /// - Card sprites are generated once: an aged-paper or dark-sepia fill inside
     ///   a rounded double ink rule, 9-sliced so any panel size keeps crisp
     ///   borders.
@@ -31,7 +31,18 @@ namespace CupheadOnline.UI
 
         // ── Font ──────────────────────────────────────────────────────────────
         static Font _menuFont;
+        static bool _menuFontIsGameFont;
+        static int _fontVersion;
         static float _nextFontLookupAt;
+
+        sealed class LabelRefreshState
+        {
+            public int FontVersion = -1;
+            public float NextScanAt;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<int, LabelRefreshState> _labelRefresh =
+            new System.Collections.Generic.Dictionary<int, LabelRefreshState>(16);
 
         static readonly string[] FontPreference =
         {
@@ -52,7 +63,7 @@ namespace CupheadOnline.UI
         {
             get
             {
-                if (_menuFont != null && IsGameFont(_menuFont))
+                if (_menuFontIsGameFont && _menuFont != null)
                     return _menuFont;
 
                 if (Time.unscaledTime >= _nextFontLookupAt)
@@ -60,14 +71,24 @@ namespace CupheadOnline.UI
                     _nextFontLookupAt = Time.unscaledTime + 1f;
                     var found = FindGameFont();
                     if (found != null)
-                        _menuFont = found;
+                        SetMenuFont(found, isGameFont: true);
                 }
 
                 if (_menuFont == null)
-                    _menuFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
+                    SetMenuFont(Resources.GetBuiltinResource<Font>("Arial.ttf"), isGameFont: false);
 
                 return _menuFont;
             }
+        }
+
+        static void SetMenuFont(Font font, bool isGameFont)
+        {
+            if (font == _menuFont && isGameFont == _menuFontIsGameFont)
+                return;
+
+            _menuFont = font;
+            _menuFontIsGameFont = isGameFont;
+            _fontVersion++;
         }
 
         static bool IsGameFont(Font font)
@@ -108,9 +129,10 @@ namespace CupheadOnline.UI
         }
 
         /// <summary>
-        /// Re-applies the current MenuFont to every Text under root. Cheap when
-        /// the font has not changed; lets panels created before the game fonts
-        /// loaded upgrade themselves.
+        /// Re-applies the current MenuFont to every Text under root. Panels call
+        /// this every frame, so the hierarchy is only rescanned when the font
+        /// changed or once a second (to catch labels added later); otherwise it
+        /// is a dictionary lookup.
         /// </summary>
         public static void RefreshLabelFonts(GameObject root)
         {
@@ -120,6 +142,23 @@ namespace CupheadOnline.UI
             var font = MenuFont;
             if (font == null)
                 return;
+
+            int key = root.GetInstanceID();
+            LabelRefreshState state;
+            if (!_labelRefresh.TryGetValue(key, out state))
+            {
+                if (_labelRefresh.Count > 64)
+                    _labelRefresh.Clear(); // overlays are recreated; drop dead roots
+                state = new LabelRefreshState();
+                _labelRefresh[key] = state;
+            }
+
+            float now = Time.unscaledTime;
+            if (state.FontVersion == _fontVersion && now < state.NextScanAt)
+                return;
+
+            state.FontVersion = _fontVersion;
+            state.NextScanAt = now + 1f;
 
             var labels = root.GetComponentsInChildren<Text>(true);
             for (int i = 0; i < labels.Length; i++)

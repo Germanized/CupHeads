@@ -1,5 +1,54 @@
 # Changelog
 
+## v1.5.0 - 2026-10-15
+
+Full audit and netcode overhaul. Wire protocol 3: both players must update (older builds are refused with a version message).
+
+### Gameplay sync fixes
+
+- Fixed the guest's own character rubber-banding whenever it moved: it was snapped to the host's round-trip-delayed copy of it whenever they differed by more than 8 units (players run at 490 units/s). The host now acknowledges which input it applied, and the guest compares against its own position at that same moment, blending out only genuine divergence. Applies to run-and-gun and plane levels.
+- Fixed everything freezing when the host's character died: the session tick only advanced while the local player's motor ran, so every stale-packet filter rejected all later state — the guest was dragged back to a frozen position and enemy/boss sync stopped. The tick now advances every physics step for the whole session.
+- Fixed a resync (F6, REQUEST RESYNC, or the desync sentinel's automatic one) restarting the guest's level mid-fight. Recovery now only loads the host's level if the guest is not already in it.
+- Fixed lost jumps, dashes and parries: button-down edges were recomputed from the last two packets, so a press was dropped whenever two input packets arrived in one frame or one was lost. Input packets now carry per-button press counters and edges are served once per Update and once per FixedUpdate, Rewired-style, with expiry.
+- Fixed analog-stick movement differing between machines: the remote player's `GetAxisInt` was overridden with a cruder threshold than the game's 8-way quantiser (dead zone, duck threshold, camera rotation). The redundant `PlayerInput` overrides are gone; the game's own code reads the routed input.
+- Fixed phantom damage: every `TakeDamage` call was replicated, including those during invulnerability frames and super-invincibility, flooding the reliable channel and letting the partner's proxy take hits its owner never took. Only hits that actually land are sent now.
+- Host-authoritative knockout: the guest can no longer reach KNOCKOUT, save progress and run the results flow while the host is still fighting. A guest whose local boss dies first waits for the host (12 s fail-open); a host win finishes the guest's boss through the game's own damage path.
+- Boss HP is now mirrored host-authoritatively on the guest in both directions; upward corrections never cross back over a phase threshold and are taken off the death-card timeline so progress is not double-counted.
+- Both machines seed Unity's RNG with the shared scene seed as each level loads, so bosses roll the same opening patterns.
+- Symmetric level-start gate: whichever peer loads first now waits for the other (previously only the host waited), so both fights start on the same beat.
+- Shared pause: opening the pause menu inside a level freezes both games, like local co-op, instead of letting one side's boss timeline run on. `Networking.EnableSharedPause`.
+- Input is muted while the local game is paused, so pause-menu navigation no longer makes the partner's copy of you jump and shoot.
+- Enemy corrections are gentler: a 24-unit dead zone instead of snapping at 6 units, far corrections treated as an identity mismatch instead of teleporting the wrong enemy, and animation states only forced after a mismatch persists (forcing normal transitions replayed animation events and spawned extra projectiles).
+- Removed fake tracer streaks and duplicate animator triggers on the partner's built-in character — its real shots already render. Tracers remain for 3+ player avatars.
+- Fixed false "Simulation drift detected" warnings (cumulative tick comparison) and false "Desync detected" auto-resyncs (5-unit position tolerance against a latency-delayed proxy).
+- Scene changes now replicate the transition, icon, `SceneLoader.CurrentLevel` and chess gauntlet context, and the host no longer broadcasts (or wipes sync state for) load requests the game is about to ignore.
+- With only two players, the PlayerManager targeting/aggregate overrides stay out of the way so vanilla boss targeting runs unchanged; with 3+ players `GetAllPlayers` no longer reuses one shared dictionary across nested calls.
+
+### Stability
+
+- One failing subsystem can no longer break the frame: every per-frame tick runs in its own guard with rate-limited logging.
+- Packet handlers are isolated per packet. Previously an `InvalidOperationException` from any game-side handler was mistaken for a Steam failure and permanently disabled networking until restart.
+- A P2P failure from a queued or extra lobby member no longer disconnects the active partner, and guests ignore P2P session requests from anyone but the lobby owner.
+- Ping is measured with a high-resolution clock and smoothed.
+- Field accessors created in patch classes fail soft if a game update renames a field.
+
+### Performance
+
+- Enemy sync scans the scene twice a second instead of every frame and sends at 15/30 Hz instead of once per rendered frame.
+- Input is sent on change plus a 30 Hz heartbeat instead of every rendered frame; map state once per tick instead of every frame.
+- Shot / EX / super / parry events are only sent when 3+ players are present.
+- Overlay font refresh no longer rescans every label every frame; boss health bars rescan the scene every 2 s once a boss is tracked; the lobby reads the clipboard at most twice a second; Rewired input is read through direct calls instead of reflection.
+
+### Build, installer, tooling
+
+- `build.ps1` never actually ran the hook audit: the path contained a literal BEL character. Fixed.
+- `build.ps1` now finds Cuphead in any Steam library listed in `libraryfolders.vdf` (it only checked the default library and a few fixed drives), and fails with a clear message instead of hanging on a prompt when run non-interactively.
+- Added a repo `NuGet.config` so an unreachable machine-wide feed cannot break restore.
+- The installer's predist step copies the exact DLL `build.ps1` just built (or the newest one), instead of whichever configuration it found first — a Debug build could ship a stale Release DLL.
+- The installer verifies the installed DLL by SHA-256 against its bundled copy, pins the BepInEx fallback download to the bundled 5.x release, offers Back / Try Again after a failed install, and can launch Cuphead directly.
+- The hook audit also checks `AccessTools.Field/Method` and `FieldRefAccess` member names.
+- Removed dead code: the legacy UDP `NetManager`, the unused title-screen injector, the `LobbyScreen` shim, and a redundant `PlayerInput.Init` patch.
+
 ## v1.4.0 - 2026-07-18
 
 Feature release. The version jumps past the retired "1.3.x" lineage so stale installs can never be confused with current builds again.

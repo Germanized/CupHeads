@@ -6,7 +6,10 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const { execSync } = require('child_process');
+
+const CUPHEAD_STEAM_APP_ID = '268910';
 
 let mainWindow;
 
@@ -191,6 +194,16 @@ function isCupheadRunning() {
   }
 }
 
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+/**
+ * Verifies the installed DLL against the one bundled in this installer.
+ * A byte-for-byte hash match is the only reliable "is this our build" check;
+ * the old version-string scan matched any DLL that happened to contain the
+ * same "x.y.z" text. The version strings are still reported for diagnostics.
+ */
 function inspectPluginDllVersion(dllPath) {
   const expectedVersion = app.getVersion();
   const result = {
@@ -204,11 +217,18 @@ function inspectPluginDllVersion(dllPath) {
     if (!dllPath || !fs.existsSync(dllPath))
       return result;
 
-    const buffer = fs.readFileSync(dllPath);
-    const text = buffer.toString('utf16le');
+    const text = fs.readFileSync(dllPath).toString('utf16le');
     const versions = text.match(/\b\d+\.\d+\.\d+\b/g) || [];
     result.detectedVersions = Array.from(new Set(versions));
-    result.matchesExpected = text.includes(expectedVersion);
+
+    const bundledDll = resolveBundledFile('CupheadOnline.dll');
+    if (fs.existsSync(bundledDll)) {
+      result.matchesExpected = sha256File(dllPath) === sha256File(bundledDll);
+      result.method = 'sha256';
+    } else {
+      result.matchesExpected = text.includes(expectedVersion);
+      result.method = 'version-string';
+    }
   } catch (err) {
     result.error = err.message;
   }
@@ -306,13 +326,11 @@ function verifyInstall(dir) {
       : 'unknown';
     return {
       ok: false,
-      message: 'CupheadOnline.dll is not the bundled installer version. Expected '
+      message: 'The installed CupheadOnline.dll is not the build bundled with this installer (v'
         + app.getVersion()
-        + ', detected '
+        + '; found version strings: '
         + detected
-        + '. Close Cuphead, run Install again, and make sure the log says CupHeads '
-        + app.getVersion()
-        + '.',
+        + '). Close Cuphead, press Install again, and both players should use the same installer.',
       checks,
     };
   }
@@ -404,6 +422,18 @@ ipcMain.handle('launch-steam', async () => {
   }
 });
 
+ipcMain.handle('launch-cuphead', async () => {
+  if (isCupheadRunning())
+    return { ok: true, message: 'Cuphead is already running.' };
+
+  try {
+    await shell.openExternal('steam://rungameid/' + CUPHEAD_STEAM_APP_ID);
+    return { ok: true, message: 'Asked Steam to launch Cuphead with CupHeads.' };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+});
+
 ipcMain.handle('verify-install', (_, dir) => verifyInstall(dir));
 
 function getCupheadArch(cupheadDir) {
@@ -474,15 +504,17 @@ function download(url, dest, onProgress) {
       }, (res) => {
         armTimeout();
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume(); // release the socket of the redirect response
           if (++redirectCount > 10) {
             fail(new Error('Too many redirects while downloading BepInEx.'));
             return;
           }
-          doGet(res.headers.location);
+          doGet(new URL(res.headers.location, requestUrl).toString());
           return;
         }
 
         if (res.statusCode !== 200) {
+          res.resume();
           fail(new Error('Download failed (HTTP ' + res.statusCode + ')'));
           return;
         }
@@ -540,49 +572,14 @@ function getBundledBepInExArchive(arch) {
   return null;
 }
 
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: { 'User-Agent': 'CupHeads-Installer' },
-    }, (res) => {
-      let body = '';
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            resolve(JSON.parse(body));
-          } catch (err) {
-            reject(err);
-          }
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-  });
+// The mod is built against the BepInEx 5 API, so the fallback download is
+// pinned to the same 5.x release the installer bundles. "Latest" on GitHub
+// could resolve to an incompatible major version.
+function getBepInExDownloadUrl(arch) {
+  return BEPINEX[arch] || BEPINEX.x64;
 }
 
-async function getLatestBepInExUrl(arch) {
-  try {
-    const release = await fetchJson('https://api.github.com/repos/BepInEx/BepInEx/releases/latest');
-    if (!release || !Array.isArray(release.assets))
-      throw new Error('Invalid release data');
-
-    const assetPattern = arch === 'x64'
-      ? /BepInEx_(?:win_)?x64_.*\.zip$/i
-      : /BepInEx_(?:win_)?x86_.*\.zip$/i;
-
-    const asset = release.assets.find((item) => assetPattern.test(item.name));
-    if (asset && asset.browser_download_url)
-      return asset.browser_download_url;
-  } catch (err) {
-    console.warn('[main] Failed to resolve latest BepInEx release:', err.message);
-  }
-
-  return BEPINEX[arch];
-}
+let installInProgress = false;
 
 ipcMain.on('install', async (event, { cupheadDir, skipBepInEx }) => {
   const send = (type, data) => {
@@ -594,6 +591,12 @@ ipcMain.on('install', async (event, { cupheadDir, skipBepInEx }) => {
     }
   };
 
+  if (installInProgress) {
+    send('error', { message: 'An install is already running. Wait for it to finish.' });
+    return;
+  }
+
+  installInProgress = true;
   try {
     const manifest = loadInstallManifest();
     const existingState = getInstallState(cupheadDir);
@@ -621,7 +624,7 @@ ipcMain.on('install', async (event, { cupheadDir, skipBepInEx }) => {
           message: 'Using bundled BepInEx repair package from the installer...',
         });
       } else {
-        const zipUrl = await getLatestBepInExUrl(arch);
+        const zipUrl = getBepInExDownloadUrl(arch);
         zipPath = path.join(os.tmpdir(), path.basename(new URL(zipUrl).pathname));
 
         send('step', {
@@ -777,5 +780,7 @@ ipcMain.on('install', async (event, { cupheadDir, skipBepInEx }) => {
     });
   } catch (err) {
     send('error', { message: err.message });
+  } finally {
+    installInProgress = false;
   }
 });

@@ -61,7 +61,11 @@ namespace CupheadOnline.UI
         public static BossHealthBarOverlay Instance { get; private set; }
 
         private const int MaxBars = 3;
-        private const float ScanInterval = 0.45f;
+        // A full scene scan (FindObjectsOfType<MonoBehaviour>) costs a few ms on
+        // busy fights; once bosses are tracked their handles are read every
+        // frame, so the scan only has to catch new arrivals.
+        private const float ScanIntervalSearching = 0.75f;
+        private const float ScanIntervalTracking = 2f;
         private const float DefeatedHoldSeconds = 1.35f;
         private const float MinInterestingHealth = 8f;
         private const float BaseBarWidth = 700f;
@@ -224,14 +228,17 @@ namespace CupheadOnline.UI
 
         private void Refresh()
         {
+            bool scanned = false;
             if (Time.unscaledTime >= _nextScanAt)
             {
                 ScanBosses();
-                _nextScanAt = Time.unscaledTime + ScanInterval;
+                scanned = true;
             }
 
             ReadBossSnapshots(ScratchSnapshots);
             int count = Mathf.Min(MaxBars, ScratchSnapshots.Count);
+            if (scanned)
+                _nextScanAt = Time.unscaledTime + (count > 0 ? ScanIntervalTracking : ScanIntervalSearching);
             UpdateResponsiveLayout(count);
             for (int i = 0; i < _bars.Length; i++)
             {

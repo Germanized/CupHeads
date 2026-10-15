@@ -15,7 +15,7 @@ This repository is intended to provide the source code, build scripts, documenta
 
 Both players must run the same CupHeads version.
 
-Since v1.4.0 the connection handshake carries the mod version and a wire-protocol number. If the builds do not match, the connection is refused with a clear message telling both players which versions they have, instead of silently desyncing. Older pre-1.4.0 builds are detected and refused the same way.
+Since v1.4.0 the connection handshake carries the mod version and a wire-protocol number (v1.5.0 uses protocol 3). If the builds do not match, the connection is refused with a clear message telling both players which versions they have, instead of silently desyncing. Older pre-1.4.0 builds are detected and refused the same way.
 
 ## Features
 
@@ -25,20 +25,24 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 * Host, join, invite friend, retry last action, and export bug reports
 * Host-led lobby flow with integrated save slot, lead character, and start-game actions
 * Host-authoritative scene syncing for level and menu transitions
-* Host-authoritative client drift correction to keep the guest aligned with the host
+* Client-side prediction for your own character with time-aligned reconciliation: the host acknowledges which input it applied, so only real divergence is corrected (no rubber-banding while moving)
+* Loss-tolerant input: per-button press counters so jumps, dashes and parries survive packet loss and bursty delivery
 * Automatic host scene-follow so guests are pulled into the selected save or map
 * Networked overworld handoff that spawns both native players and routes guest controls through Player Two
 * Universal input routing for keyboard and controller during active sessions
 * Safer remote button-edge handling for jump, dash, confirm, cancel, and menu actions
 * Hybrid co-op authority where the host owns world state while each player can own damage to their own body
 * Deterministic cross-machine enemy addressing so boss and enemy state sync matches between both PCs
-* Boss health synchronised through the game's own damage path, keeping phase changes and the knockout in step
-* Level-entry ready gate: the host briefly holds the fight until the guest's scene finishes loading, with a fail-open timeout
+* Boss health mirrored from the host through the game's own damage path, keeping phase changes in step without ever regressing a phase
+* Host-authoritative knockout: the guest never wins (or saves) a fight the host is still playing
+* Symmetric level-start gate: whichever player loads first waits for the other, so both fights start on the same beat (fail-open timeout)
+* Shared RNG seed applied as each level loads, so bosses roll the same opening patterns on both machines
+* Shared pause: opening the pause menu in a level freezes both games, like local co-op
 * Automatic reconnect after an unexpected mid-run disconnect, with session state restored from the host's recovery bundle
 * Desync sentinel that samples boss HP and player positions, then auto-corrects and resyncs after repeated mismatches
 * Plane (shmup) levels use the same host-simulated proxy sync model as run-and-gun levels
 * Ping-adaptive jitter buffering for smooth remote movement on slower connections
-* Visual-only tracer streaks so the other player's shots stay readable without double-counting damage
+* Visual-only tracer streaks for extra (3rd+) participants' shots
 * Remote menu input routing for overworld prompts, equip cards, and shop-style menus
 * Defensive stale-packet guards for save selection, host snapshots, weapon events, revive grants, damage events, scene loads, and status updates
 * Save compatibility checks for mismatched progress, DLC state, or setup

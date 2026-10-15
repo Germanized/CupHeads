@@ -162,14 +162,39 @@ Write-Host ""
 Write-Step "Locating Cuphead"
 
 if (-not $CupheadPath) {
-    $steamKey = "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam"
-    if (-not (Test-Path $steamKey)) {
-        $steamKey = "HKLM:\SOFTWARE\Valve\Steam"
+    # Every Steam library, not just the default one: libraryfolders.vdf lists
+    # the extra libraries (e.g. D:\SteamLibrary) the game may live in.
+    $steamRoots = @()
+    foreach ($steamKey in @("HKLM:\SOFTWARE\WOW6432Node\Valve\Steam", "HKLM:\SOFTWARE\Valve\Steam", "HKCU:\SOFTWARE\Valve\Steam")) {
+        if (Test-Path $steamKey) {
+            $props = Get-ItemProperty $steamKey
+            foreach ($name in @("InstallPath", "SteamPath")) {
+                if ($props.PSObject.Properties[$name] -and $props.$name) { $steamRoots += ($props.$name -replace '/', '\') }
+            }
+        }
     }
-    if (Test-Path $steamKey) {
-        $steamPath = (Get-ItemProperty $steamKey).InstallPath
-        $candidate = Join-Path $steamPath "steamapps\common\Cuphead"
-        if (Test-Path "$candidate\Cuphead.exe") { $CupheadPath = $candidate }
+
+    $libraries = @()
+    # (Loop variables must not be named $root: PowerShell names are
+    # case-insensitive and $Root is the repository root.)
+    foreach ($steamRoot in ($steamRoots | Select-Object -Unique)) {
+        $libraries += $steamRoot
+        $vdf = [System.IO.Path]::Combine($steamRoot, "steamapps\libraryfolders.vdf")
+        if ([System.IO.File]::Exists($vdf)) {
+            foreach ($m in [regex]::Matches((Get-Content $vdf -Raw), '"path"\s+"([^"]+)"')) {
+                $libraries += ($m.Groups[1].Value -replace '\\\\', '\')
+            }
+        }
+    }
+
+    foreach ($library in ($libraries | Select-Object -Unique)) {
+        # Path.Combine, not Join-Path: libraryfolders.vdf can still list a
+        # library on a drive that is no longer attached.
+        $candidate = [System.IO.Path]::Combine($library, "steamapps\common\Cuphead")
+        if ([System.IO.File]::Exists([System.IO.Path]::Combine($candidate, "Cuphead.exe"))) {
+            $CupheadPath = $candidate
+            break
+        }
     }
 }
 
@@ -191,6 +216,9 @@ if (-not $CupheadPath) {
 
 if (-not $CupheadPath -or -not (Test-Path "$CupheadPath\Cuphead.exe")) {
     Write-Host "  Could not auto-detect Cuphead." -ForegroundColor Yellow
+    if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) {
+        Fail "Cuphead not found. Pass -CupheadPath or set CUPHEAD_PATH."
+    }
     $CupheadPath = Read-Host "  Enter full path to Cuphead folder"
     if (-not (Test-Path "$CupheadPath\Cuphead.exe")) {
         Fail "Cuphead.exe not found at: $CupheadPath"
@@ -204,14 +232,14 @@ Write-Step "Restoring NuGet packages"
 Invoke-Checked { dotnet restore $ModProject --nologo } "NuGet restore failed."
 
 Write-Step "Auditing Harmony hook targets"
-$AuditScript = Join-Path $Root "toolsudit-hooks.ps1"
+$AuditScript = Join-Path $Root "tools\audit-hooks.ps1"
 if (Test-Path $AuditScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $AuditScript
     if ($LASTEXITCODE -ne 0) {
         Fail "Hook audit failed - a Harmony target or reflected member no longer exists."
     }
 } else {
-    Write-Host "  (toolsudit-hooks.ps1 not found - skipping)"
+    Write-Host "  (tools\audit-hooks.ps1 not found - skipping)"
 }
 
 Write-Step "Building mod DLL ($Configuration)"
@@ -231,6 +259,9 @@ Copy-Item $ModDll (Join-Path $DistDir "CupheadOnline.dll") -Force
 Write-Step "Staging DLL for Electron installer"
 New-Item -ItemType Directory -Force $InstallerAssetsDir | Out-Null
 Copy-Item $ModDll (Join-Path $InstallerAssetsDir "CupheadOnline.dll") -Force
+# The installer's predist hook copies the mod DLL again; point it at the one
+# just built so a stale build from the other configuration is never packaged.
+$env:CUPHEADS_MOD_DLL = $ModDll
 
 Write-Step "Checking startup splash video"
 Optimize-StartupSplashVideo -AssetsDir $InstallerAssetsDir

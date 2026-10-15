@@ -186,11 +186,11 @@ namespace CupheadOnline.Sync
                 return;
 
             _pendingStates[pkt.PlayerId] = pkt;
-            if (!TryEnsureAvatar(pkt.PlayerId))
-                return;
 
+            // Avatar creation (a scene scan + clone) is throttled in Update;
+            // packets arrive at 50 Hz per participant and must stay cheap.
             AvatarState avatar;
-            if (_avatars.TryGetValue(pkt.PlayerId, out avatar))
+            if (_avatars.TryGetValue(pkt.PlayerId, out avatar) && avatar != null && avatar.Controller != null)
                 ApplyLifeState(avatar, pkt.IsDead);
         }
 
@@ -199,7 +199,7 @@ namespace CupheadOnline.Sync
             if (pkt.PlayerId <= (byte)PlayerId.PlayerTwo)
                 return;
 
-            if (!TryEnsureAvatar(pkt.PlayerId))
+            if (!HasAvatar(pkt.PlayerId))
                 return;
 
             AvatarState avatar;
@@ -256,27 +256,37 @@ namespace CupheadOnline.Sync
             RemoteShotTracer.Spawn(origin, new Vector2(pkt.AimX, pkt.AimY));
         }
 
+        static readonly List<byte> _scratchIds = new List<byte>(4);
+        static float _nextAvatarAttemptAt;
+
         public static void Update()
         {
-            if (_pendingStates.Count > 0)
+            float now = Time.unscaledTime;
+
+            // Avatars clone a live level player, so only try inside a level, and
+            // at most twice a second while a participant still lacks one.
+            if (_pendingStates.Count > 0 && Level.Current != null && now >= _nextAvatarAttemptAt)
             {
-                var pendingIds = new List<byte>(_pendingStates.Keys);
-                for (int i = 0; i < pendingIds.Count; i++)
-                    TryEnsureAvatar(pendingIds[i]);
+                _nextAvatarAttemptAt = now + 0.5f;
+                _scratchIds.Clear();
+                _scratchIds.AddRange(_pendingStates.Keys);
+                for (int i = 0; i < _scratchIds.Count; i++)
+                {
+                    if (!HasAvatar(_scratchIds[i]))
+                        TryEnsureAvatar(_scratchIds[i]);
+                }
             }
 
             if (_avatars.Count == 0)
                 return;
 
-            float now = Time.unscaledTime;
-            var deadIds = new List<byte>();
-
+            _scratchIds.Clear();
             foreach (var entry in _avatars)
             {
                 var avatar = entry.Value;
                 if (avatar == null || avatar.Controller == null)
                 {
-                    deadIds.Add(entry.Key);
+                    _scratchIds.Add(entry.Key);
                     continue;
                 }
 
@@ -284,8 +294,8 @@ namespace CupheadOnline.Sync
                     SetShootingState(avatar, false, 0f);
             }
 
-            for (int i = 0; i < deadIds.Count; i++)
-                RemoveParticipant(deadIds[i]);
+            for (int i = 0; i < _scratchIds.Count; i++)
+                RemoveParticipant(_scratchIds[i]);
         }
 
         public static void RemoveParticipant(byte participantId)
@@ -317,6 +327,7 @@ namespace CupheadOnline.Sync
 
             _avatars.Clear();
             _pendingStates.Clear();
+            _nextAvatarAttemptAt = 0f;
             _motorParticipantIds.Clear();
             _controllerParticipantIds.Clear();
             _awakeRenames.Clear();

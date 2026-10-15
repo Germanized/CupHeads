@@ -5,6 +5,18 @@ using System.Collections.Generic;
 
 namespace CupheadOnline.Patches
 {
+    /// <summary>
+    /// These PlayerManager overrides exist only to fold extra (3rd+) network
+    /// participants into the game's player queries. With just the two built-in
+    /// players they must stay out of the way so vanilla targeting, camera and
+    /// player-count logic runs exactly as designed.
+    /// </summary>
+    static class ExtendedPlayers
+    {
+        internal static bool Active =>
+            MultiplayerSession.IsActive && ExtraParticipantTracker.TotalCount > 0;
+    }
+
     static class PlayerAggregateMath
     {
         internal static bool TryBuildAggregate(
@@ -18,7 +30,7 @@ namespace CupheadOnline.Patches
             cameraCenter = Vector2.zero;
             topPlayerPosition = Vector2.zero;
 
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return false;
 
             Vector2 centerSum = Vector2.zero;
@@ -132,8 +144,6 @@ namespace CupheadOnline.Patches
     {
         static readonly List<AbstractPlayerController> ScratchPlayers =
             new List<AbstractPlayerController>(6);
-        static readonly Dictionary<int, AbstractPlayerController> ScratchPlayerMap =
-            new Dictionary<int, AbstractPlayerController>(6);
         static int _nextSelectionCursor;
 
         internal static bool TryCollectPlayers(List<AbstractPlayerController> players)
@@ -220,11 +230,14 @@ namespace CupheadOnline.Patches
             if (!TryCollectPlayers(ScratchPlayers))
                 return false;
 
-            ScratchPlayerMap.Clear();
+            // A fresh map per call: callers enumerate the result, and a nested
+            // GetAllPlayers() inside that loop must not mutate the collection
+            // being enumerated. Only reached with extra participants present.
+            var map = new Dictionary<int, AbstractPlayerController>(ScratchPlayers.Count);
             for (int i = 0; i < ScratchPlayers.Count; i++)
-                ScratchPlayerMap[i] = ScratchPlayers[i];
+                map[i] = ScratchPlayers[i];
 
-            values = ScratchPlayerMap.Values;
+            values = map.Values;
             return true;
         }
 
@@ -267,7 +280,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref AbstractPlayerController __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             PlayerSelectionMath.TryGetNext(ref __result);
@@ -279,7 +292,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref AbstractPlayerController __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             PlayerSelectionMath.TryGetRandom(ref __result);
@@ -291,7 +304,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref AbstractPlayerController __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             PlayerSelectionMath.TryGetFirst(ref __result);
@@ -303,7 +316,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref AbstractPlayerController __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             PlayerSelectionMath.TryGetCurrent(ref __result);
@@ -315,7 +328,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref int __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             int count;
@@ -329,7 +342,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref Dictionary<int, AbstractPlayerController>.ValueCollection __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             Dictionary<int, AbstractPlayerController>.ValueCollection values;
@@ -343,7 +356,7 @@ namespace CupheadOnline.Patches
     {
         static void Postfix(ref bool __result)
         {
-            if (!MultiplayerSession.IsActive)
+            if (!ExtendedPlayers.Active)
                 return;
 
             int count;

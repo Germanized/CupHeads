@@ -30,10 +30,26 @@ namespace CupheadOnline.Patches
             wm.OnWeaponChangeEvent += (next) => BroadcastWeaponSwitch(player, next);
         }
 
+        /// <summary>
+        /// Shot / EX / super / parry events only drive the visual-only avatars of
+        /// extra (3rd+) participants: the built-in partner slot replays these
+        /// natively from routed input. Skipping them in plain two-player
+        /// sessions keeps a reliable packet per bullet off the wire.
+        /// </summary>
+        internal static bool ShouldSendVisualEvents()
+        {
+            if (Plugin.Net == null)
+                return false;
+            if (MultiplayerSession.IsHost)
+                return Plugin.Net.ConnectedPeerCount > 1;
+            return ExtraParticipantTracker.TotalCount > 0;
+        }
+
         static void BroadcastShot(LevelPlayerController player, byte eventType)
         {
             if (!MultiplayerSession.IsActive) return;
             if (Plugin.Net == null || !Plugin.Net.IsConnected) return;
+            if (!ShouldSendVisualEvents()) return;
             var motor = player.motor;
             var pkt = new WeaponEventPacket
             {
@@ -77,6 +93,7 @@ namespace CupheadOnline.Patches
         {
             if (!MultiplayerSession.IsActive) return;
             if (Plugin.Net == null || !Plugin.Net.IsConnected) return;
+            if (!WeaponManagerPatch.ShouldSendVisualEvents()) return;
             var player = __instance.player;
             if (player == null || !MultiplayerSession.IsLocalPlayer(player.id)) return;
 

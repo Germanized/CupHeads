@@ -292,6 +292,7 @@ function onEnterInstall() {
   resetItem('ii-clean');
   resetItem('ii-verify');
   set('error-box', false);
+  set('install-error-actions', false);
   set('ii-bep-bar', false);
   fill('ii-bep-fill', 0);
   reportGlobalError('');
@@ -414,9 +415,22 @@ installer.onInstallProgress((data) => {
 
   if (type === 'error') {
     set('error-box', true);
+    set('install-error-actions', true);
     setText('error-msg', data.message);
     setItem('ii-verify', 'error', 'Install stopped');
   }
+});
+
+// A failed install used to leave the window stuck on this page; offer a way
+// back to the folder step and an in-place retry (e.g. after closing Cuphead).
+document.getElementById('btn-i-back').addEventListener('click', () => goTo(1, -1));
+document.getElementById('btn-i-retry').addEventListener('click', async () => {
+  if (cupheadPath) {
+    const state = await installer.checkInstallState(cupheadPath);
+    installState = state;
+    skipBepInExRepair = !!state.hasBepInExCore && !!state.hasDoorstop;
+  }
+  onEnterInstall();
 });
 
 document.getElementById('btn-done').addEventListener('click', () => installer.windowClose());
@@ -425,7 +439,8 @@ document.getElementById('btn-done-open-folder').addEventListener('click', async 
   reportGlobalError(result.ok ? '' : result.message);
 });
 document.getElementById('btn-done-launch-steam').addEventListener('click', async () => {
-  const result = await installer.launchSteam();
+  const launch = installer.launchCuphead || installer.launchSteam;
+  const result = await launch();
   reportGlobalError(result.ok ? '' : result.message);
 });
 

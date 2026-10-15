@@ -92,7 +92,7 @@ namespace CupheadOnline
             OnSessionEnded?.Invoke();
         }
 
-        /// <summary>Called every FixedUpdate from PlayerMotorPatch.</summary>
+        /// <summary>Called once per physics step from Plugin.FixedUpdate while a session is active.</summary>
         public static void IncrementTick() => Tick++;
 
         public static bool IsLocalPlayer(PlayerId id) => IsParticipant((byte)id, true);

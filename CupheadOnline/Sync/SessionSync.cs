@@ -277,6 +277,14 @@ namespace CupheadOnline.Sync
                     _recoveryRequestCount++;
                     BroadcastRecoveryBundle("Guest requested a resync.");
                     break;
+
+                case SessionSignalKind.PauseOn:
+                    PauseSync.OnRemotePause(true);
+                    break;
+
+                case SessionSignalKind.PauseOff:
+                    PauseSync.OnRemotePause(false);
+                    break;
             }
         }
 
@@ -370,6 +378,7 @@ namespace CupheadOnline.Sync
                 CurrentLevel = Level.Current != null ? (int)Level.Current.CurrentLevel : -1,
                 CurrentMapScene = PlayerData.Data != null ? (int)PlayerData.Data.CurrentMap : -1,
                 HostTick = MultiplayerSession.Tick,
+                RngSeed = RngSync.CurrentSeed,
                 SceneName = GetActiveSceneName(),
             };
 
@@ -598,7 +607,12 @@ namespace CupheadOnline.Sync
             sb.AppendLine("Stage: " + GetStageSummary());
             sb.AppendLine("Tracked Save: " + (_hasTrackedSave ? (_trackedSaveSlot + 1).ToString() : "(none)"));
             sb.AppendLine("Save Revision: " + _saveRevision);
-            sb.AppendLine("Ready Gate: disabled");
+            sb.AppendLine("Session Tick: " + MultiplayerSession.Tick);
+            sb.AppendLine("Level Ready Gate: " + (Plugin.EnableLevelReadyGate ? (LevelReadyGate.IsHolding ? "holding" : "on") : "off"));
+            sb.AppendLine("Shared Pause: " + (Plugin.EnableSharedPause ? (PauseSync.IsFrozenForPartner ? "frozen for partner" : "on") : "off"));
+            sb.AppendLine("Knockout Gate: " + (LevelOutcomeSync.IsLocalWinParked ? "waiting for host" : "idle"));
+            sb.AppendLine("Own-Body Correction: " + OwnPlayerReconciler.LastErrorMagnitude.ToString("0.0") + " units");
+            sb.AppendLine("RNG Seed: " + RngSync.CurrentSeed.ToString("X8"));
             sb.AppendLine("Players: " + MultiplayerSession.ActivePlayerCount);
             sb.AppendLine("Local Character: " + MultiplayerSession.GetLocalCharacterName());
             sb.AppendLine("Remote Character: " + MultiplayerSession.GetRemoteCharacterName());
@@ -869,16 +883,10 @@ namespace CupheadOnline.Sync
                 return;
             }
 
-            uint localTick = MultiplayerSession.Tick;
-            uint hostTick = snapshot.HostTick;
-            uint tickDelta = localTick > hostTick ? localTick - hostTick : hostTick - localTick;
-            if (snapshot.IsInLevel && tickDelta > 240)
-            {
-                _desyncSummary = "Simulation drift detected (" + tickDelta + " ticks). Use REQUEST RESYNC.";
-                _desyncSeverity = SessionIssueSeverity.Warning;
-                return;
-            }
-
+            // Session ticks count physics steps since each peer's own session
+            // start, so their absolute difference is not a drift signal (it was
+            // a permanent false alarm). Real divergence is measured by the
+            // DesyncSentinel's boss-HP / position samples instead.
             if (_lastHostSnapshotAt > 0f && Time.unscaledTime - _lastHostSnapshotAt > 4f)
             {
                 _desyncSummary = "Host snapshots stalled - request a resync if gameplay diverges.";
@@ -942,6 +950,11 @@ namespace CupheadOnline.Sync
                 : "scene:" + snapshot.SceneName + ":" + snapshot.CurrentMapScene;
             if (targetKey == _lastAutoFollowTarget && Time.unscaledTime - _lastAutoFollowAt < 2.5f)
                 return;
+            if (SceneLoader.CurrentlyLoading)
+                return;
+
+            if (snapshot.RngSeed != 0u)
+                RngSync.SetSeed(snapshot.RngSeed);
 
             if (snapshot.IsInLevel && Enum.IsDefined(typeof(Levels), snapshot.CurrentLevel))
             {

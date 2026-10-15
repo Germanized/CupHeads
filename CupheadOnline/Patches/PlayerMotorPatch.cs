@@ -12,7 +12,9 @@ namespace CupheadOnline.Patches
     /// remains authoritative for movement, collisions, jump state, death, and
     /// animation transitions.
     ///
-    /// Client: the host-controlled slot stays a proxy that consumes snapshots.
+    /// Client: the host-controlled slot stays a proxy that consumes snapshots,
+    /// and the guest's own body is predicted locally and reconciled against
+    /// the host's acknowledged state (OwnPlayerReconciler).
     /// </summary>
     [HarmonyPatch(typeof(LevelPlayerMotor), "FixedUpdate")]
     public static class PlayerMotorPatch
@@ -46,7 +48,6 @@ namespace CupheadOnline.Patches
                 return false;
             }
 
-            MultiplayerSession.IncrementTick();
             return true;
         }
 
@@ -68,14 +69,36 @@ namespace CupheadOnline.Patches
             var pkt = BuildStatePacket(player, __instance);
 
             if (authoritativeBuiltIn)
-                Plugin.Net.SendPlayerState(ref pkt);
-            else
             {
-                SendInputFrameAndState(__instance, player, ref pkt);
-                if (MultiplayerSession.IsClient && MultiplayerSession.IsLocalPlayer(player.id))
-                    ApplyAuthoritativeCorrection(__instance, player.id);
+                // For the guest's body, tell the guest which of its inputs this
+                // state reflects so it can reconcile against its own history.
+                if (MultiplayerSession.IsNetworkControlledPlayer(player.id))
+                    RemoteInputDriver.TryGetInputAck((byte)player.id, out pkt.AckInputSeq, out pkt.AckAgeMs);
+
+                Plugin.Net.SendPlayerState(ref pkt);
+                return;
+            }
+
+            Plugin.Net.SendPlayerState(ref pkt);
+            if (MultiplayerSession.IsClient)
+            {
+                Vector2 step = OwnPlayerReconciler.Apply(__instance.transform);
+                if (step != Vector2.zero && LastPositionFixedRef != null && LastPositionRef != null)
+                {
+                    // The motor derives MoveDirection (and so the run/idle pose)
+                    // from position deltas; shift its reference points with the
+                    // nudge so a correction never reads as player movement.
+                    LastPositionFixedRef(__instance) += step;
+                    LastPositionRef(__instance) += step;
+                }
+                OwnPlayerReconciler.RecordLocalPosition(__instance.transform.position);
             }
         }
+
+        static readonly AccessTools.FieldRef<LevelPlayerMotor, Vector2> LastPositionFixedRef =
+            SafeAccess.FieldRef<LevelPlayerMotor, Vector2>("lastPositionFixed");
+        static readonly AccessTools.FieldRef<LevelPlayerMotor, Vector2> LastPositionRef =
+            SafeAccess.FieldRef<LevelPlayerMotor, Vector2>("lastPosition");
 
         internal static byte BuildFlags(AbstractPlayerController player, LevelPlayerMotor m)
         {
@@ -114,11 +137,6 @@ namespace CupheadOnline.Patches
             return (byte)(anim.GetCurrentAnimatorStateInfo(0).fullPathHash & 0xFF);
         }
 
-        static void SendInputFrameAndState(LevelPlayerMotor motor, LevelPlayerController player, ref PlayerStatePacket statePkt)
-        {
-            Plugin.Net.SendPlayerState(ref statePkt);
-        }
-
         static void ApplyRemoteState(LevelPlayerMotor motor, byte participantId)
         {
             var snapshot = RemotePlayer.GetNextSnapshot(participantId);
@@ -140,8 +158,8 @@ namespace CupheadOnline.Patches
             if (RemoteInputDriver.TryGetCurrent(participantId, out input))
             {
                 t.Property("MoveDirection").SetValue(new Trilean2(
-                    input.AxisX > 0.38f ? 1 : input.AxisX < -0.38f ? -1 : 0,
-                    input.AxisY > 0.38f ? 1 : input.AxisY < -0.38f ? -1 : 0));
+                    QuantizeAxis(input.AxisX, input.AxisY, horizontal: true),
+                    QuantizeAxis(input.AxisX, input.AxisY, horizontal: false)));
             }
             else
             {
@@ -159,95 +177,27 @@ namespace CupheadOnline.Patches
             RemotePlayer.UpdateStateTransitions(participantId, motor, s);
         }
 
-        static void ApplyAuthoritativeCorrection(LevelPlayerMotor motor, PlayerId playerId)
+        /// <summary>
+        /// Same 8-way quantisation as PlayerInput.GetAxisInt: a 0.375 radial dead
+        /// zone, then the normalised component against sin(22.5°).
+        /// </summary>
+        internal static int QuantizeAxis(float x, float y, bool horizontal)
         {
-            PlayerStatePacket snapshot;
-            if (!RemotePlayer.TryGetLocalAuthoritySnapshot(playerId, out snapshot))
-                return;
+            float magnitude = Mathf.Sqrt(x * x + y * y);
+            if (magnitude < 0.375f)
+                return 0;
 
-            var target = new Vector3(snapshot.PosX, snapshot.PosY, motor.transform.position.z);
-            float distance = Vector2.Distance(motor.transform.position, target);
-            float deadZone = Plugin.LatencyFriendlyDamage ? 0.85f : 0.35f;
-            float snapDistance = Plugin.LatencyFriendlyDamage ? 8f : 4f;
-            float blend = Plugin.LatencyFriendlyDamage ? 0.08f : 0.18f;
-
-            if (distance < deadZone)
-                return;
-
-            motor.transform.position = distance > snapDistance
-                ? target
-                : Vector3.Lerp(motor.transform.position, target, blend);
+            float component = (horizontal ? x : y) / magnitude;
+            if (component > 0.38268f) return 1;
+            if (component < -0.38268f) return -1;
+            return 0;
         }
     }
 
-    [HarmonyPatch(typeof(PlayerInput), nameof(PlayerInput.GetAxis))]
-    public static class PlayerInputAxisPatch
-    {
-        static bool Prefix(PlayerInput __instance, PlayerInput.Axis axis, ref float __result)
-        {
-            if (!MultiplayerSession.IsActive)
-                return true;
-            if (!MultiplayerSession.IsNetworkControlledPlayer(__instance.playerId))
-                return true;
-
-            InputFramePacket input;
-            if (!RemoteInputDriver.TryGetCurrent(__instance.playerId, out input))
-            {
-                __result = 0f;
-                return false;
-            }
-
-            __result = axis == PlayerInput.Axis.X ? input.AxisX : input.AxisY;
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(PlayerInput), nameof(PlayerInput.GetAxisInt))]
-    public static class PlayerInputAxisIntPatch
-    {
-        static bool Prefix(PlayerInput __instance, PlayerInput.Axis axis, ref int __result)
-        {
-            if (!MultiplayerSession.IsActive)
-                return true;
-            if (!MultiplayerSession.IsNetworkControlledPlayer(__instance.playerId))
-                return true;
-
-            InputFramePacket input;
-            if (!RemoteInputDriver.TryGetCurrent(__instance.playerId, out input))
-            {
-                __result = 0;
-                return false;
-            }
-
-            float v = axis == PlayerInput.Axis.X ? input.AxisX : input.AxisY;
-            __result = v > 0.38f ? 1 : v < -0.38f ? -1 : 0;
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(PlayerInput), nameof(PlayerInput.GetButton))]
-    public static class PlayerInputButtonPatch
-    {
-        static bool Prefix(PlayerInput __instance, CupheadButton button, ref bool __result)
-        {
-            if (!MultiplayerSession.IsActive)
-                return true;
-            if (!MultiplayerSession.IsNetworkControlledPlayer(__instance.playerId))
-                return true;
-
-            InputFramePacket input;
-            if (!RemoteInputDriver.TryGetCurrent(__instance.playerId, out input))
-            {
-                __result = false;
-                return false;
-            }
-
-            __result = input.IsPressed(button);
-            return false;
-        }
-    }
-
-    // NOTE: Cuphead's PlayerInput has no GetButtonDown / GetButtonUp methods —
-    // edge queries go through Rewired.Player and are covered by the
-    // RewiredPlayerGetButtonDown/Up patches in InputRouterPatches.
+    // NOTE: PlayerInput.GetAxis / GetAxisInt / GetButton are intentionally not
+    // patched. They all read PlayerInput.actions (the slot's Rewired.Player),
+    // and the Rewired postfixes in InputRouterPatches already substitute the
+    // remote input there, so the game's own quantisation (dead zone, 8-way
+    // snapping, duck threshold, camera rotation) runs unchanged for the remote
+    // player exactly as it does on that player's own machine.
 }

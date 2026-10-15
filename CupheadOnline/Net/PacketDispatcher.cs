@@ -6,8 +6,9 @@ using CupheadOnline.UI;
 namespace CupheadOnline.Net
 {
     /// <summary>
-    /// Routes incoming packets (already on main thread, called from NetManager.Poll)
-    /// to the appropriate handler.
+    /// Routes incoming packets (already on the main thread, called from
+    /// SteamNetManager.Poll) to the appropriate handler. Any exception a handler
+    /// throws is contained per packet by SteamNetManager.
     /// </summary>
     public static class PacketDispatcher
     {
@@ -93,6 +94,7 @@ namespace CupheadOnline.Net
                 {
                     var pkt = new SceneChangePacket();
                     pkt.Read(r);
+                    if (MultiplayerSession.IsHost) break;
                     if (!System.Enum.IsDefined(typeof(Levels), pkt.LevelEnum))
                     {
                         Plugin.Log.LogWarning("[Dispatcher] Ignored invalid level change " + pkt.LevelEnum + ".");
@@ -100,11 +102,12 @@ namespace CupheadOnline.Net
                     }
 
                     RngSync.SetSeed(pkt.RngSeed);
-                    if (!MultiplayerSession.IsHost)
-                    {
-                        SceneSyncState.AllowNextClientLevelLoad();
-                        SceneLoader.LoadLevel((Levels)pkt.LevelEnum, SceneLoader.Transition.Iris);
-                    }
+                    SceneSyncState.AllowNextClientLevelLoad();
+                    SceneLoader.LoadLevel(
+                        (Levels)pkt.LevelEnum,
+                        ToTransition(pkt.TransitionStart, SceneLoader.Transition.Iris),
+                        ToIcon(pkt.Icon),
+                        SceneContextCodec.Decode(pkt.ContextKind));
                     break;
                 }
 
@@ -112,6 +115,7 @@ namespace CupheadOnline.Net
                 {
                     var pkt = new MenuSceneChangePacket();
                     pkt.Read(r);
+                    if (MultiplayerSession.IsHost) break;
                     if (!System.Enum.IsDefined(typeof(Scenes), pkt.SceneEnum))
                     {
                         Plugin.Log.LogWarning("[Dispatcher] Ignored invalid scene change " + pkt.SceneEnum + ".");
@@ -119,15 +123,33 @@ namespace CupheadOnline.Net
                     }
 
                     RngSync.SetSeed(pkt.RngSeed);
-                    if (!MultiplayerSession.IsHost)
+                    if (System.Enum.IsDefined(typeof(Levels), pkt.CurrentLevel))
+                        SceneLoader.SetCurrentLevel((Levels)pkt.CurrentLevel);
+
+                    SceneSyncState.AllowNextClientSceneLoad();
+                    SceneLoader.LoadScene(
+                        (Scenes)pkt.SceneEnum,
+                        ToTransition(pkt.TransitionStart, SceneLoader.Transition.Fade),
+                        ToTransition(pkt.TransitionEnd, SceneLoader.Transition.Fade),
+                        ToIcon(pkt.Icon),
+                        SceneContextCodec.Decode(pkt.ContextKind));
+                    break;
+                }
+
+                case PacketType.LevelSync:
+                {
+                    var pkt = new LevelSyncPacket();
+                    pkt.Read(r);
+                    if (MultiplayerSession.IsHost) break;
+
+                    switch (pkt.SyncKind)
                     {
-                        SceneSyncState.AllowNextClientSceneLoad();
-                        SceneLoader.LoadScene(
-                            (Scenes)pkt.SceneEnum,
-                            (SceneLoader.Transition)pkt.TransitionStart,
-                            (SceneLoader.Transition)pkt.TransitionEnd,
-                            (SceneLoader.Icon)pkt.Icon,
-                            null);
+                        case LevelSyncKind.Go:
+                            LevelReadyGate.OnHostGo(pkt.LevelEnum);
+                            break;
+                        case LevelSyncKind.Won:
+                            LevelOutcomeSync.OnHostLevelWon(pkt.LevelEnum);
+                            break;
                     }
                     break;
                 }
@@ -195,21 +217,31 @@ namespace CupheadOnline.Net
                     if (MultiplayerSession.IsHost) break;
                     var pkt = new SessionStartPacket();
                     pkt.Read(r);
-                    SessionSync.ApplySessionStart(pkt);
-                    RngSync.SetSeed(pkt.RngSeed);
                     if (!MultiplayerSession.IsActive || MultiplayerSession.IsHost)
                         MultiplayerSession.StartAsClient();
-                    if (pkt.IsInLevel && pkt.CurrentLevel >= 0)
-                    {
-                        if (!System.Enum.IsDefined(typeof(Levels), pkt.CurrentLevel))
-                        {
-                            Plugin.Log.LogWarning("[Dispatcher] Ignored invalid session-start level " + pkt.CurrentLevel + ".");
-                            break;
-                        }
+                    SessionSync.ApplySessionStart(pkt);
 
-                        SceneSyncState.AllowNextClientLevelLoad();
-                        SceneLoader.LoadLevel((Levels)pkt.CurrentLevel, SceneLoader.Transition.Iris);
+                    if (!pkt.IsInLevel || pkt.CurrentLevel < 0)
+                    {
+                        RngSync.SetSeed(pkt.RngSeed);
+                        break;
                     }
+
+                    if (!System.Enum.IsDefined(typeof(Levels), pkt.CurrentLevel))
+                    {
+                        Plugin.Log.LogWarning("[Dispatcher] Ignored invalid session-start level " + pkt.CurrentLevel + ".");
+                        break;
+                    }
+
+                    // A recovery bundle is "get into the host's level", never
+                    // "restart it": reloading a level we are already fighting in
+                    // would throw this peer back to the intro mid-fight.
+                    if (IsInLevel(pkt.CurrentLevel) || SceneLoader.CurrentlyLoading)
+                        break;
+
+                    RngSync.SetSeed(pkt.RngSeed);
+                    SceneSyncState.AllowNextClientLevelLoad();
+                    SceneLoader.LoadLevel((Levels)pkt.CurrentLevel, SceneLoader.Transition.Iris);
                     break;
                 }
 
@@ -261,6 +293,32 @@ namespace CupheadOnline.Net
                     Plugin.Log.LogWarning("[Dispatcher] Unknown packet type: " + type);
                     break;
             }
+        }
+
+        static bool IsInLevel(int levelEnum)
+        {
+            try
+            {
+                return Level.Current != null && (int)Level.Current.CurrentLevel == levelEnum;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        static SceneLoader.Transition ToTransition(byte raw, SceneLoader.Transition fallback)
+        {
+            return System.Enum.IsDefined(typeof(SceneLoader.Transition), (int)raw)
+                ? (SceneLoader.Transition)raw
+                : fallback;
+        }
+
+        static SceneLoader.Icon ToIcon(byte raw)
+        {
+            return System.Enum.IsDefined(typeof(SceneLoader.Icon), (int)raw)
+                ? (SceneLoader.Icon)raw
+                : SceneLoader.Icon.Hourglass;
         }
     }
 }

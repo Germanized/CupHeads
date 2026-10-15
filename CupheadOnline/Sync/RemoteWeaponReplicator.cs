@@ -5,15 +5,15 @@ using CupheadOnline.Net;
 namespace CupheadOnline.Sync
 {
     /// <summary>
-    /// Applies weapon events received from the network onto the remote player's
-    /// weapon manager, so the correct visual / audio effects play locally.
+    /// Applies weapon events received from the network.
     ///
-    /// We intentionally do NOT spawn actual projectiles on the client for the remote
-    /// player — the host's projectiles are replicated via EnemySyncManager's enemy-state
-    /// logic, and the visual muzzle flash / animation is driven here.
-    ///
-    /// Rationale: spawning physics-enabled projectiles on both sides would double-count
-    /// damage. The host is the only source of truth for collision.
+    /// The other built-in player (P1 on the guest, P2 on the host) runs its real
+    /// LevelPlayerWeaponManager from the routed remote input, so its shots, EX,
+    /// super and parry animations already play natively — layering animator
+    /// triggers or tracer streaks on top only doubled them. For built-in slots
+    /// we therefore only re-assert the equipped weapon (in case a switch press
+    /// was lost). Extra participants' visual-only avatars get the full treatment
+    /// in ExtraRemoteAvatarManager.
     /// </summary>
     public static class RemoteWeaponReplicator
     {
@@ -54,84 +54,27 @@ namespace CupheadOnline.Sync
 
             if (player == null) return;
 
-            // Set look direction so the muzzle flash appears in the right direction
-            if (player.motor != null)
-            {
-                var t = HarmonyLib.Traverse.Create(player.motor);
-                var dir = new Trilean2(pkt.AimX, pkt.AimY);
-                t.Property("LookDirection").SetValue(dir);
-                t.Property("TrueLookDirection").SetValue(dir);
-            }
-
             var wm = player.weaponManager;
             if (wm == null) return;
 
-            switch ((WeaponEventType)pkt.EventType)
-            {
-                case WeaponEventType.Fire:
-                    // Raise the fire anim + a visual-only tracer so the shot is readable
-                    TriggerAnimatorParam(player, "Shooting", true);
-                    SpawnTracer(player, pkt);
-                    break;
-
-                case WeaponEventType.Ex:
-                    TriggerAnimatorTrigger(player, "Ex");
-                    SpawnTracer(player, pkt);
-                    break;
-
-                case WeaponEventType.Super:
-                    TriggerAnimatorTrigger(player, "Super");
-                    break;
-
-                case WeaponEventType.Parry:
-                    TriggerAnimatorTrigger(player, "Parry");
-                    break;
-
-                case WeaponEventType.Switch:
-                    ApplyWeaponSwitch(wm, pkt.WeaponId);
-                    break;
-            }
+            if ((WeaponEventType)pkt.EventType == WeaponEventType.Switch)
+                ApplyWeaponSwitch(wm, pkt.WeaponId);
         }
 
-        static void SpawnTracer(LevelPlayerController player, WeaponEventPacket pkt)
-        {
-            // Only where real projectiles are missing: the proxy slot on the
-            // client. The host simulates the guest's weapons for real.
-            if (MultiplayerSession.IsHost)
-                return;
-
-            Vector2 origin;
-            try { origin = player.center; }
-            catch { origin = player.transform.position; }
-
-            RemoteShotTracer.Spawn(origin, new Vector2(pkt.AimX, pkt.AimY));
-        }
-
-        static void TriggerAnimatorParam(LevelPlayerController player, string param, bool value)
-        {
-            var anim = player.animationController?.animator;
-            if (anim == null) return;
-            anim.SetBool(param, value);
-        }
-
-        static void TriggerAnimatorTrigger(LevelPlayerController player, string trigger)
-        {
-            var anim = player.animationController?.animator;
-            if (anim == null) return;
-            anim.SetTrigger(trigger);
-        }
+        static readonly System.Reflection.MethodInfo SwitchWeaponMethod =
+            HarmonyLib.AccessTools.Method(typeof(LevelPlayerWeaponManager), "SwitchWeapon", new[] { typeof(Weapon) });
+        static readonly HarmonyLib.AccessTools.FieldRef<LevelPlayerWeaponManager, Weapon> CurrentWeaponRef =
+            CupheadOnline.Patches.SafeAccess.FieldRef<LevelPlayerWeaponManager, Weapon>("currentWeapon");
 
         static void ApplyWeaponSwitch(LevelPlayerWeaponManager wm, byte weaponId)
         {
-            // The weapon enum value was sent — try to switch to that weapon
             try
             {
                 var weapon = LoadoutCodec.DecodeWeapon(weaponId, primarySlot: true);
-                // Call SwitchWeapon via reflection since it's likely private
-                var mi = typeof(LevelPlayerWeaponManager).GetMethod(
-                    "SwitchWeapon",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                mi?.Invoke(wm, new object[] { weapon });
+                if (weapon == Weapon.None || (CurrentWeaponRef != null && CurrentWeaponRef(wm) == weapon))
+                    return; // the native switch press already got there
+
+                SwitchWeaponMethod?.Invoke(wm, new object[] { weapon });
             }
             catch (System.Exception ex)
             {
