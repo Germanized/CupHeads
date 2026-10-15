@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.6.0 - 2026-10-15
+
+The multiplayer screens, rebuilt out of Cuphead's own UI. Wire protocol is still 4, so 1.6.0 plays with 1.5.x.
+
+### Lobby
+
+- The lobby is now a printed paper card like the game's Options card — the game's own card art (its small print reprinted as "MDHR, INC., Multiplayer"), Vogue / Memphis type, menu ink with the selection in red, and the game's own CONFIRM / BACK prompts — instead of dark panels drawn over the menu.
+- Two player seats styled as selected save slots: Cuphead red or Mugman green with the character's head, the player's Steam name and their ping; an empty seat is the plain ruled box with a "?".
+- The menu only lists what can be done right now. It used to be a fixed list of eight items whose labels changed meaning with the state (HOST GAME became SAVE SLOT, RETRY became START GAME) with the rest greyed out. Now: HOST A GAME / JOIN A GAME when idle; INVITE A FRIEND / COPY LOBBY CODE / CLOSE LOBBY while hosting; SAVE FILE / YOU PLAY / COLOR pickers then START! once a partner is in; a waiting screen for the guest.
+- Pickers work like the Visual options (`LABEL: VALUE`, left / right). SAVE FILE describes the save exactly as the save screen does ("MUGMAN A - 2%, Inkwell Isle Two").
+- One status line and one hint for the selected item, in plain words, replace the badge, roster dump and two hint lines.
+- Back never ends a session by accident: in a lobby it first moves to LEAVE / CLOSE LOBBY, and leaving keeps you on the lobby screen.
+
+### In game
+
+- The connection HUD was a dark card always covering the top-right corner. It is now a small paper tag that shows your partner and ping as each level starts, carries short messages, and otherwise only stays up while the connection is laggy, a sync problem is being fixed, or your partner disconnects.
+- The pause-time session panel (a technical readout) is now a card beside the pause menu: who you are playing with, as which character, the connection with a signal meter, and a problem line only when there is one.
+- The comm wheel strip, its message slips, the team results card and the mod health warning are printed on the same paper cards.
+
 ## v1.5.2 - 2026-10-15
 
 Verification fixes. Wire protocol is still 4, so 1.5.2 and 1.5.1 can play together.

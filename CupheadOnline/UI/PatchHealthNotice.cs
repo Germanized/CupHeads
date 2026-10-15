@@ -12,6 +12,7 @@ namespace CupheadOnline.UI
     {
         static GameObject _root;
         static CanvasGroup _group;
+        static Image _card;
         static Text _body;
 
         public static void Tick()
@@ -35,13 +36,11 @@ namespace CupheadOnline.UI
             if (!menuScene)
                 return;
 
-            CupheadUiTheme.RefreshLabelFonts(_root);
-
+            NativeUiKit.ApplyCard(_card, false);
             if (_body != null)
             {
-                _body.text = Plugin.FailedPatchCount + " MOD HOOK(S) FAILED TO APPLY\n"
-                    + "Multiplayer may misbehave. A game update or a stale\n"
-                    + "mod build is the usual cause. Press F9 to copy a report.";
+                _body.text = Plugin.FailedPatchCount + " mod hook(s) failed to apply, so multiplayer may misbehave. "
+                    + "A game update or an old mod build is the usual cause. Press F9 to copy a report.";
             }
         }
 
@@ -50,41 +49,27 @@ namespace CupheadOnline.UI
             if (_root != null)
                 return;
 
-            _root = new GameObject("CupHeads_PatchHealthNotice");
-            Object.DontDestroyOnLoad(_root);
+            _root = NativeUiKit.MakeOverlayCanvas("CupHeads_PatchHealthNotice", 165);
 
-            var canvas = _root.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 165;
+            _card = NativeUiKit.MakeCard(_root, "Card", Vector2.zero, new Vector2(500f, 176f), false, "Notice");
+            var rt = _card.rectTransform;
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(28f, -28f);
 
-            var scaler = _root.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-
-            var card = new GameObject("Card");
-            card.transform.SetParent(_root.transform, false);
-            var rt = card.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0f, 0f);
-            rt.pivot = new Vector2(0f, 0f);
-            rt.anchoredPosition = new Vector2(18f, 18f);
-            rt.sizeDelta = new Vector2(430f, 110f);
-            CupheadUiTheme.StyleCard(card.AddComponent<Image>(), dark: true);
-
-            _group = card.AddComponent<CanvasGroup>();
+            _group = _card.gameObject.AddComponent<CanvasGroup>();
             _group.alpha = 0f;
             _group.interactable = false;
             _group.blocksRaycasts = false;
 
-            CupheadUiTheme.MakeLabel(
-                card, "! MOD HEALTH WARNING !", 15, CupheadUiTheme.PosterRed,
-                new Vector2(0f, 36f), new Vector2(400f, 22f),
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
+            var title = NativeUiKit.MakeText(_card.gameObject, "Title", FontRole.Vogue, 26, NativeUiKit.Red,
+                TextAnchor.MiddleCenter, Vector2.zero, new Vector2(460f, 32f));
+            NativeUiKit.TopAnchor(title.rectTransform, 0f, 22f);
+            title.text = "MOD HEALTH WARNING";
 
-            _body = CupheadUiTheme.MakeLabel(
-                card, string.Empty, 12, CupheadUiTheme.Cream,
-                new Vector2(0f, -14f), new Vector2(400f, 62f),
-                TextAnchor.UpperCenter, new Vector2(0.5f, 0.5f));
-            _body.lineSpacing = 1.1f;
+            _body = NativeUiKit.MakeText(_card.gameObject, "Body", FontRole.Memphis, 18, NativeUiKit.Ink,
+                TextAnchor.UpperCenter, Vector2.zero, new Vector2(440f, 80f));
+            NativeUiKit.TopAnchor(_body.rectTransform, 0f, 58f);
+            _body.lineSpacing = 0.95f;
         }
     }
 }

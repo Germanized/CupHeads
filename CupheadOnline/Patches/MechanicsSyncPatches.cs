@@ -40,7 +40,7 @@ namespace CupheadOnline.Patches
             if (!MultiplayerSession.IsActive)
                 return true;
 
-            ConnectionHUD.Show("Online partners can't be dropped here - use DISCONNECT in the lobby.");
+            ConnectionHUD.Show("Online partners can't be dropped here. Use LEAVE in the Multiplayer menu.");
             return false;
         }
     }

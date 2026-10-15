@@ -51,8 +51,8 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 * DLC compatibility check before the host starts a run
 * Stable loadout packet encoding for Cuphead weapon, super, and charm IDs
 * Defensive weapon-prefab fallback guards for stale or invalid remote weapon IDs
-* Live connection HUD with role, status, session information, and sync warnings
-* In-game session panel with `F8` toggle for diagnostics and session state
+* Connection tag that stays out of the way: it shows your partner and ping as each level starts, carries short messages (partner paused, chose Retry, joined), and only stays up while the connection is laggy, a sync problem is being fixed, or your partner disconnects
+* Session card beside the pause menu (who you're playing with, connection, and any problem); `F8` keeps it up while unpaused
 * Optional boss health bars during battle levels
 * Battle Assist HUD with fight timer, deaths, retries, parries, and optional boss HP multiplier readout
 * QoL hotkeys:
@@ -71,19 +71,17 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 
 ### Menu and UX
 
-* Shared vintage UI theme: every overlay uses Cuphead's own menu fonts (resolved from the game at runtime) on 1930s-style card panels with a rounded double ink rule and gold accents
-* Comm wheel with four canned messages that pop as themed toasts on both screens
+* Built from the game's own UI: multiplayer screens are printed on Cuphead's paper option cards (with "MDHR, INC., Multiplayer" small print), in its Vogue and Memphis typefaces and exact menu ink / red, using the save-slot boxes, character heads and the game's own CONFIRM / BACK prompts
+* Multiplayer lobby laid out like the Options card: two player seats styled as selected saves (Cuphead red / Mugman green) with names and ping, a status line, a hint for the selected item, and a menu that only lists what you can do right now
+* Host's choices as native pickers: `SAVE FILE` (shown like the save screen, e.g. "MUGMAN A - 2%, Inkwell Isle Two"), `YOU PLAY`, and `COLOR`, then `START!`
+* Back is never destructive in a session: it moves to LEAVE / CLOSE LOBBY first, and leaving keeps you in the lobby screen
+* Comm wheel strip and message slips printed on the same paper cards
 * Team results card on the knockout screen with both players' deaths, parries, and retries
 * Lets a knocked-out player steer their revive ghost sideways while waiting for a parry-revive
-* Lobby roster shows live ping and a save-synced indicator, and a toast announces when someone joins
 * In-game mod health warning on menu scenes if any Harmony hook failed to apply
-* Lobby-style multiplayer screen injected into Slot Select
-* Cleaner roster, status, and action layout
-* Steam readiness shown in-menu
 * Runtime player color swatches with in-game tinting
 * Dedicated credits screen
-* Clear Steam readiness and connection status messaging
-* Clipboard helpers for lobby IDs and diagnostics
+* Clipboard helpers for lobby codes and bug reports
 * Retry and reconnect guidance when Steam sessions fail
 * Toggleable gameplay HUD features through the BepInEx config
 * Toggleable networking and dev-test settings through the BepInEx config
@@ -200,14 +198,15 @@ BepInEx/config/com.cupheadonline.mod.cfg
 
 ## Multiplayer start flow
 
-1. Host opens `MULTIPLAYER` and creates or joins a Steam lobby.
-2. Once connected, the host picks `SAVE SLOT` and `LEAD` inside the multiplayer lobby.
-3. The guest stays in the lobby and follows the host automatically.
-4. The host presses `START GAME` from the multiplayer lobby to launch the run.
+1. Host opens `MULTIPLAYER`, picks `HOST A GAME`, then `INVITE A FRIEND` (or `COPY LOBBY CODE`).
+2. The friend opens `MULTIPLAYER` and picks `JOIN A GAME` to accept the Steam invite (or to join the code on their clipboard).
+3. Once connected, the host picks `SAVE FILE` and `YOU PLAY` with left / right.
+4. The guest stays in the lobby and follows the host automatically.
+5. The host presses `START!` to launch the run.
 
 Character choice follows Cuphead's native co-op model. The host chooses the lead character, and the guest becomes the opposite character. The base game does not expose a separate fully independent guest character picker.
 
-If the guest sees `REQUEST HOST SAVE`, press it once to ask the host for a fresh save sync. The host also rebroadcasts the selected save while the lobby is open.
+If the guest sees `ASK HOST AGAIN`, press it once to ask the host for a fresh save sync. The host also rebroadcasts the selected save while the lobby is open.
 
 When the host starts, CupHeads sends an explicit launch scene and keeps watching host snapshots. If the guest falls behind or misses the first launch packet, the mod attempts to auto-follow the host scene instead of requiring manual resync.
 

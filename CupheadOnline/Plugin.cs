@@ -422,6 +422,8 @@ namespace CupheadOnline
             add("WinStatsCard", WinStatsCard.Tick);
             add("PatchHealthNotice", PatchHealthNotice.Tick);
             add("SessionPausePanel", SessionPausePanel.Ensure);
+            add("UiPreview", UiPreview.Tick);
+            add("NativeUiFonts", NativeUiKit.Tick);
 
             _ticks = ticks.ToArray();
         }
@@ -556,6 +558,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.5.2";
+        public const string VERSION = "1.6.0";
     }
 }

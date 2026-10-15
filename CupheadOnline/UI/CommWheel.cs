@@ -21,7 +21,9 @@ namespace CupheadOnline.UI
         static GameObject _root;
         static CanvasGroup _toastGroup;
         static Text _toastLabel;
+        static Image _toastCard;
         static CanvasGroup _hintGroup;
+        static Image _hintCard;
         static float _toastUntil;
 
         public static void Tick()
@@ -29,7 +31,7 @@ namespace CupheadOnline.UI
             if (!Plugin.EnableCommWheel || !MultiplayerSession.IsActive
              || Plugin.Net == null || !Plugin.Net.IsConnected)
             {
-                SetHintVisible(false);
+                SetHintVisible(UiPreview.Overlays);
                 UpdateToast();
                 return;
             }
@@ -76,6 +78,13 @@ namespace CupheadOnline.UI
             ShowToast(sender, pkt.MessageId);
         }
 
+        /// <summary>UiPreview: a long-lived sample message.</summary>
+        public static void ShowPreviewToast()
+        {
+            ShowToast(UiPreview.PartnerCharacter, 1);
+            _toastUntil = Time.unscaledTime + 30f;
+        }
+
         static void ShowToast(string sender, int messageId)
         {
             if (messageId < 0 || messageId >= Messages.Length)
@@ -85,7 +94,8 @@ namespace CupheadOnline.UI
             if (_toastLabel == null)
                 return;
 
-            _toastLabel.text = sender.ToUpperInvariant() + ": " + Messages[messageId];
+            // Sender in the menu red, message in ink — like a printed telegram.
+            _toastLabel.text = "<color=#AD1C1C>" + sender.ToUpperInvariant() + ":</color> " + Messages[messageId];
             _toastUntil = Time.unscaledTime + TOAST_SECONDS;
         }
 
@@ -93,6 +103,9 @@ namespace CupheadOnline.UI
         {
             if (_toastGroup == null)
                 return;
+
+            NativeUiKit.ApplyCard(_toastCard, false);
+            NativeUiKit.ApplyCard(_hintCard, false);
 
             if (Time.unscaledTime < _toastUntil)
             {
@@ -103,8 +116,6 @@ namespace CupheadOnline.UI
             {
                 _toastGroup.alpha = 0f;
             }
-
-            CupheadUiTheme.RefreshLabelFonts(_root);
         }
 
         static void SetHintVisible(bool visible)
@@ -120,52 +131,37 @@ namespace CupheadOnline.UI
             if (_root != null)
                 return;
 
-            _root = new GameObject("CupHeads_CommWheel");
-            Object.DontDestroyOnLoad(_root);
+            _root = NativeUiKit.MakeOverlayCanvas("CupHeads_CommWheel", 170);
 
-            var canvas = _root.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 170;
-
-            var scaler = _root.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-
-            // Toast card — top centre, under the boss bars.
-            var toast = new GameObject("Toast");
-            toast.transform.SetParent(_root.transform, false);
-            var toastRt = toast.AddComponent<RectTransform>();
+            // Toast — a paper slip at top centre, under the boss bars.
+            _toastCard = NativeUiKit.MakeCard(_root, "Toast", Vector2.zero, new Vector2(520f, 82f), false, null);
+            var toastRt = _toastCard.rectTransform;
             toastRt.anchorMin = toastRt.anchorMax = new Vector2(0.5f, 1f);
             toastRt.pivot = new Vector2(0.5f, 1f);
             toastRt.anchoredPosition = new Vector2(0f, -170f);
-            toastRt.sizeDelta = new Vector2(420f, 56f);
-            CupheadUiTheme.StyleCard(toast.AddComponent<Image>(), dark: true);
-            _toastGroup = toast.AddComponent<CanvasGroup>();
+            _toastGroup = _toastCard.gameObject.AddComponent<CanvasGroup>();
             _toastGroup.alpha = 0f;
             _toastGroup.interactable = false;
             _toastGroup.blocksRaycasts = false;
-            _toastLabel = CupheadUiTheme.MakeLabel(
-                toast, string.Empty, 19, CupheadUiTheme.Cream,
-                Vector2.zero, new Vector2(390f, 44f),
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
+            _toastLabel = NativeUiKit.MakeText(_toastCard.gameObject, "Label", FontRole.Vogue, 30, NativeUiKit.Ink,
+                TextAnchor.MiddleCenter, new Vector2(0f, 1f), new Vector2(480f, 50f));
+            _toastLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
 
-            // Hint card — bottom centre while C is held.
-            var hint = new GameObject("Hint");
-            hint.transform.SetParent(_root.transform, false);
-            var hintRt = hint.AddComponent<RectTransform>();
+            // Hint — a paper strip at bottom centre while C is held.
+            _hintCard = NativeUiKit.MakeCard(_root, "Hint", Vector2.zero, new Vector2(900f, 78f), false, null);
+            var hintRt = _hintCard.rectTransform;
             hintRt.anchorMin = hintRt.anchorMax = new Vector2(0.5f, 0f);
             hintRt.pivot = new Vector2(0.5f, 0f);
-            hintRt.anchoredPosition = new Vector2(0f, 26f);
-            hintRt.sizeDelta = new Vector2(660f, 52f);
-            CupheadUiTheme.StyleCard(hint.AddComponent<Image>(), dark: true);
-            _hintGroup = hint.AddComponent<CanvasGroup>();
+            hintRt.anchoredPosition = new Vector2(0f, 30f);
+            _hintGroup = _hintCard.gameObject.AddComponent<CanvasGroup>();
             _hintGroup.alpha = 0f;
             _hintGroup.interactable = false;
             _hintGroup.blocksRaycasts = false;
-            CupheadUiTheme.MakeLabel(
-                hint, "1 WAIT!   2 GO!   3 REVIVE ME!   4 SWELL WORK!", 15, CupheadUiTheme.Gold,
-                Vector2.zero, new Vector2(630f, 40f),
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
+            var hintLabel = NativeUiKit.MakeText(_hintCard.gameObject, "Label", FontRole.Vogue, 26, NativeUiKit.Ink,
+                TextAnchor.MiddleCenter, new Vector2(0f, 1f), new Vector2(860f, 44f));
+            hintLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            hintLabel.text = "<color=#AD1C1C>1</color> WAIT!     <color=#AD1C1C>2</color> GO!     "
+                + "<color=#AD1C1C>3</color> REVIVE ME!     <color=#AD1C1C>4</color> SWELL WORK!";
         }
     }
 }

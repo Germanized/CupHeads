@@ -7,18 +7,22 @@ namespace CupheadOnline.UI
 {
     /// <summary>
     /// Shared results card on the knockout screen: both players' deaths, parries,
-    /// and retries side by side. Each peer sends a StatsReportPacket when the win
-    /// scene loads; the card fills in the partner column when it arrives.
+    /// and retries side by side, printed on the game's paper card beside its own
+    /// results board. Each peer sends a StatsReportPacket when the win scene
+    /// loads; the card fills in the partner column when it arrives.
     /// </summary>
     public static class WinStatsCard
     {
         static GameObject _root;
         static CanvasGroup _group;
-        static Text _localColumn;
-        static Text _remoteColumn;
+        static Image _card;
+        static Text _localName;
+        static Text _localStats;
+        static Text _remoteName;
+        static Text _remoteStats;
         static bool _visible;
 
-        static StatsReportPacket? _remoteStats;
+        static StatsReportPacket? _remoteReport;
 
         public static void OnSceneLoaded(string sceneName)
         {
@@ -27,7 +31,7 @@ namespace CupheadOnline.UI
             if (!isWinScene)
             {
                 Hide();
-                _remoteStats = null;
+                _remoteReport = null;
                 return;
             }
 
@@ -49,7 +53,7 @@ namespace CupheadOnline.UI
 
         public static void OnRemoteStats(StatsReportPacket pkt)
         {
-            _remoteStats = pkt;
+            _remoteReport = pkt;
             if (_visible)
                 RefreshColumns();
         }
@@ -59,7 +63,7 @@ namespace CupheadOnline.UI
             if (!_visible || _root == null)
                 return;
 
-            CupheadUiTheme.RefreshLabelFonts(_root);
+            NativeUiKit.ApplyCard(_card, false);
             RefreshColumns();
         }
 
@@ -68,6 +72,13 @@ namespace CupheadOnline.UI
             _visible = false;
             if (_group != null)
                 _group.alpha = 0f;
+        }
+
+        /// <summary>UiPreview: the card with sample partner numbers.</summary>
+        public static void ShowPreview()
+        {
+            _remoteReport = new StatsReportPacket { ParticipantId = 1, Deaths = 2, Parries = 5, Retries = 1 };
+            Show();
         }
 
         static void Show()
@@ -79,30 +90,31 @@ namespace CupheadOnline.UI
             RefreshColumns();
         }
 
+        static string Lines(int deaths, int parries, int retries)
+        {
+            return "Deaths  " + deaths + "\nParries  " + parries + "\nRetries  " + retries;
+        }
+
         static void RefreshColumns()
         {
-            if (_localColumn != null)
+            if (_localName != null)
             {
-                _localColumn.text = MultiplayerSession.GetLocalCharacterName().ToUpperInvariant()
-                    + "\nDEATHS " + SessionSync.LocalDeaths
-                    + "\nPARRIES " + SessionSync.LocalParries
-                    + "\nRETRIES " + SessionSync.LocalRetries;
+                _localName.text = MultiplayerSession.GetLocalCharacterName().ToUpperInvariant();
+                _localStats.text = Lines(SessionSync.LocalDeaths, SessionSync.LocalParries, SessionSync.LocalRetries);
             }
 
-            if (_remoteColumn != null)
+            if (_remoteName != null)
             {
-                if (_remoteStats.HasValue)
+                _remoteName.text = MultiplayerSession.GetRemoteCharacterName().ToUpperInvariant();
+                if (_remoteReport.HasValue)
                 {
-                    var stats = _remoteStats.Value;
-                    _remoteColumn.text = MultiplayerSession.GetRemoteCharacterName().ToUpperInvariant()
-                        + "\nDEATHS " + stats.Deaths
-                        + "\nPARRIES " + stats.Parries
-                        + "\nRETRIES " + stats.Retries;
+                    var stats = _remoteReport.Value;
+                    _remoteStats.text = Lines(stats.Deaths, stats.Parries, stats.Retries);
                 }
                 else
                 {
-                    _remoteColumn.text = MultiplayerSession.GetRemoteCharacterName().ToUpperInvariant()
-                        + "\nwaiting...";
+                    int n = Mathf.FloorToInt(Time.unscaledTime / 0.4f) % 4;
+                    _remoteStats.text = "waiting" + new string('.', n);
                 }
             }
         }
@@ -112,47 +124,38 @@ namespace CupheadOnline.UI
             if (_root != null)
                 return;
 
-            _root = new GameObject("CupHeads_WinStatsCard");
-            Object.DontDestroyOnLoad(_root);
+            _root = NativeUiKit.MakeOverlayCanvas("CupHeads_WinStatsCard", 155);
 
-            var canvas = _root.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 155;
-
-            var scaler = _root.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-
-            var card = new GameObject("Card");
-            card.transform.SetParent(_root.transform, false);
-            var rt = card.AddComponent<RectTransform>();
+            _card = NativeUiKit.MakeCard(_root, "Card", Vector2.zero, new Vector2(430f, 290f), false, "Results");
+            var rt = _card.rectTransform;
             rt.anchorMin = rt.anchorMax = new Vector2(1f, 0.5f);
             rt.pivot = new Vector2(1f, 0.5f);
-            rt.anchoredPosition = new Vector2(-30f, 0f);
-            rt.sizeDelta = new Vector2(340f, 220f);
-            CupheadUiTheme.StyleCard(card.AddComponent<Image>(), dark: true);
+            rt.anchoredPosition = new Vector2(-40f, 0f);
 
-            _group = card.AddComponent<CanvasGroup>();
+            _group = _card.gameObject.AddComponent<CanvasGroup>();
             _group.alpha = 0f;
             _group.interactable = false;
             _group.blocksRaycasts = false;
 
-            CupheadUiTheme.MakeLabel(
-                card, "~ TEAM RESULTS ~", 18, CupheadUiTheme.Gold,
-                new Vector2(0f, 82f), new Vector2(310f, 26f),
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
+            var title = NativeUiKit.MakeText(_card.gameObject, "Title", FontRole.Vogue, 30, NativeUiKit.Ink,
+                TextAnchor.MiddleCenter, Vector2.zero, new Vector2(390f, 38f));
+            NativeUiKit.TopAnchor(title.rectTransform, 0f, 26f);
+            title.text = "TEAM RESULTS";
 
-            _localColumn = CupheadUiTheme.MakeLabel(
-                card, string.Empty, 14, CupheadUiTheme.Cream,
-                new Vector2(-78f, -18f), new Vector2(146f, 140f),
-                TextAnchor.UpperCenter, new Vector2(0.5f, 0.5f));
-            _localColumn.lineSpacing = 1.25f;
+            _localName = Column(-98f, 76f, FontRole.Vogue, 22, NativeUiKit.Red);
+            _localStats = Column(-98f, 108f, FontRole.Memphis, 20, NativeUiKit.Ink);
+            _remoteName = Column(98f, 76f, FontRole.Vogue, 22, NativeUiKit.Red);
+            _remoteStats = Column(98f, 108f, FontRole.Memphis, 20, NativeUiKit.Ink);
+        }
 
-            _remoteColumn = CupheadUiTheme.MakeLabel(
-                card, string.Empty, 14, CupheadUiTheme.Cream,
-                new Vector2(78f, -18f), new Vector2(146f, 140f),
-                TextAnchor.UpperCenter, new Vector2(0.5f, 0.5f));
-            _remoteColumn.lineSpacing = 1.25f;
+        static Text Column(float x, float yFromTop, FontRole font, int size, Color color)
+        {
+            var text = NativeUiKit.MakeText(_card.gameObject, "Column", font, size, color,
+                TextAnchor.UpperCenter, Vector2.zero, new Vector2(180f, size > 21 ? 30f : 96f));
+            NativeUiKit.TopAnchor(text.rectTransform, x, yFromTop);
+            text.lineSpacing = 1.15f;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            return text;
         }
 
         static ushort ClampStat(int value)

@@ -1,38 +1,46 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using CupheadOnline.Patches;
 using CupheadOnline.Sync;
 
 namespace CupheadOnline.UI
 {
     /// <summary>
-    /// Lightweight in-game overlay: status, ping quality, and a little session context.
+    /// The in-game connection tag: a small printed paper card in the top-right
+    /// corner, in the game's own ink and type. Cuphead keeps its screen clear,
+    /// so the tag only shows when it has something to say:
+    ///   • a message (partner paused, chose Retry, joined…) for a few seconds,
+    ///   • your partner's name and ping for a moment as each level starts,
+    ///   • while the connection is laggy or a sync problem is being fixed,
+    ///   • when the partner disconnects.
     /// </summary>
     public class ConnectionHUD : MonoBehaviour
     {
         public static ConnectionHUD Instance { get; private set; }
 
-        private static readonly Color GoodColour         = new Color(0.55f, 0.92f, 0.62f, 1f);
-        private static readonly Color OkayColour         = new Color(0.95f, 0.85f, 0.40f, 1f);
-        private static readonly Color PoorColour         = new Color(1.00f, 0.55f, 0.10f, 1f);
-        private static readonly Color DisconnectedColour = new Color(0.90f, 0.20f, 0.15f, 1f);
-        private static readonly Color TextColour         = new Color(0.96f, 0.91f, 0.77f, 1f);
-        private static readonly Color MetaColour         = new Color(0.82f, 0.78f, 0.66f, 0.95f);
-        // Card tint per connection quality — the card sprite carries the real
-        // colours, so these stay close to white and only warm/redden the panel.
-        private static readonly Color BgGoodColour       = Color.white;
-        private static readonly Color BgOkayColour       = new Color(1f, 0.93f, 0.80f, 1f);
-        private static readonly Color BgPoorColour       = new Color(1f, 0.76f, 0.66f, 1f);
+        const float MessageSeconds = 3.5f;
+        const float LevelIntroSeconds = 4f;
+        const float DisconnectSeconds = 8f;
+        const float Width = 380f;
 
-        private Text _titleLabel;
-        private Text _pingLabel;
-        private Text _statusLabel;
-        private Text _metaLabel;
-        private Text _extrasLabel;
-        private Image _bgImage;
+        Image _card;
+        CanvasGroup _group;
+        RectTransform _cardRt;
+        Text _title;
+        Text _line;
+        Image[] _signal;
 
-        private float _connectedAt = -1f;
-        private bool _trackingConnectedSession;
-        private bool _showingDisconnectedState;
+        float _alpha;
+        string _message = string.Empty;
+        float _messageUntil;
+        bool _disconnected;
+        float _disconnectedUntil;
+        int _ping;
+        float _introUntil;
+        string _lastScene = string.Empty;
+
+        // ── API (unchanged) ───────────────────────────────────────────────────
 
         public static void Show()
         {
@@ -44,11 +52,11 @@ namespace CupheadOnline.UI
 
             if (Instance != null) return;
 
-            var go = new GameObject("CupheadOnline_HUD");
-            DontDestroyOnLoad(go);
+            var go = NativeUiKit.MakeOverlayCanvas("CupheadOnline_HUD", 150);
             Instance = go.AddComponent<ConnectionHUD>();
         }
 
+        /// <summary>Shows a short message on the tag.</summary>
         public static void Show(string status)
         {
             if (!Plugin.ShowConnectionHud)
@@ -59,7 +67,7 @@ namespace CupheadOnline.UI
 
             Show();
             if (Instance != null)
-                Instance.SetConnectedStatus(status);
+                Instance.SetMessage(status);
         }
 
         public static void Hide()
@@ -79,7 +87,7 @@ namespace CupheadOnline.UI
 
             Show();
             if (Instance != null)
-                Instance.ApplyPing(ms);
+                Instance._ping = ms;
         }
 
         public static void ShowDisconnected(string reason)
@@ -91,298 +99,161 @@ namespace CupheadOnline.UI
             }
 
             Show();
-            if (Instance != null)
-                Instance.ApplyDisconnected(reason);
+            if (Instance == null) return;
+            Instance._disconnected = true;
+            Instance._disconnectedUntil = Time.unscaledTime + DisconnectSeconds;
+            Instance._message = string.IsNullOrEmpty(reason) ? "The connection closed." : reason;
+            Instance._messageUntil = Instance._disconnectedUntil;
         }
+
+        // ── View ──────────────────────────────────────────────────────────────
 
         void Awake()
         {
-            var canvas = gameObject.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 150;
+            _card = NativeUiKit.MakeCard(gameObject, "Tag", Vector2.zero, new Vector2(Width, 100f), false, null);
+            _cardRt = _card.rectTransform;
+            _cardRt.anchorMin = _cardRt.anchorMax = _cardRt.pivot = new Vector2(1f, 1f);
+            _cardRt.anchoredPosition = new Vector2(-28f, -24f);
 
-            var scaler = gameObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920, 1080);
+            _group = _card.gameObject.AddComponent<CanvasGroup>();
+            _group.alpha = 0f;
+            _group.interactable = false;
+            _group.blocksRaycasts = false;
 
-            gameObject.AddComponent<GraphicRaycaster>();
+            _title = NativeUiKit.MakeText(_card.gameObject, "Title", FontRole.Vogue, 26, NativeUiKit.Ink,
+                TextAnchor.UpperLeft, Vector2.zero, new Vector2(Width - 110f, 34f));
+            Anchor(_title.rectTransform, new Vector2(28f, -20f));
+            _title.horizontalOverflow = HorizontalWrapMode.Overflow;
 
-            var bg = new GameObject("HUD_BG");
-            bg.transform.SetParent(gameObject.transform, false);
-            var bgRT = bg.AddComponent<RectTransform>();
-            bgRT.anchorMin = bgRT.anchorMax = new Vector2(1f, 1f);
-            bgRT.pivot = new Vector2(1f, 1f);
-            bgRT.anchoredPosition = new Vector2(-12f, -12f);
-            bgRT.sizeDelta = new Vector2(292f, 128f);
-            _bgImage = bg.AddComponent<Image>();
-            CupheadUiTheme.StyleCard(_bgImage, dark: true);
+            _line = NativeUiKit.MakeText(_card.gameObject, "Line", FontRole.Memphis, 19, NativeUiKit.InkSoft,
+                TextAnchor.UpperLeft, Vector2.zero, new Vector2(Width - 56f, 60f));
+            Anchor(_line.rectTransform, new Vector2(28f, -54f));
+            _line.lineSpacing = 0.95f;
 
-            _titleLabel = MakeLabel(bg, "CUPHEADS", 15, CupheadUiTheme.Gold, new Vector2(0f, 40f), new Vector2(270f, 20f));
-            _pingLabel = MakeLabel(bg, "PING ---", 13, OkayColour, new Vector2(0f, 20f), new Vector2(270f, 20f));
+            var signalRoot = NativeUiKit.MakeRect(_card.gameObject, "Signal", Vector2.zero, new Vector2(30f, 22f));
+            signalRoot.anchorMin = signalRoot.anchorMax = signalRoot.pivot = new Vector2(1f, 1f);
+            signalRoot.anchoredPosition = new Vector2(-30f, -24f);
+            _signal = NativeUiKit.MakeSignal(signalRoot.gameObject, new Vector2(0f, 0f), 1.1f);
+        }
 
-            _statusLabel = MakeLabel(bg, "Waiting for peer...", 10, TextColour, new Vector2(0f, -4f), new Vector2(270f, 24f));
-            _statusLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _statusLabel.verticalOverflow = VerticalWrapMode.Overflow;
+        static void Anchor(RectTransform rt, Vector2 topLeftOffset)
+        {
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = topLeftOffset;
+        }
 
-            _metaLabel = MakeLabel(bg, "", 9, MetaColour, new Vector2(0f, -28f), new Vector2(270f, 18f));
-            _extrasLabel = MakeLabel(bg, "", 9, MetaColour, new Vector2(0f, -52f), new Vector2(270f, 30f));
-            _extrasLabel.alignment = TextAnchor.UpperCenter;
-            _extrasLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _extrasLabel.verticalOverflow = VerticalWrapMode.Overflow;
+        void SetMessage(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            _message = message;
+            _messageUntil = Time.unscaledTime + MessageSeconds;
         }
 
         void Update()
         {
-            CupheadUiTheme.RefreshLabelFonts(gameObject);
-            RefreshMeta();
+            NativeUiKit.ApplyCard(_card, false);
+            float now = Time.unscaledTime;
+            var net = Plugin.Net;
+            bool connected = net != null && net.IsConnected;
+            if (connected)
+                _disconnected = false;
+
+            // Introduce the partner briefly as each level starts.
+            string scene = SceneManager.GetActiveScene().name ?? string.Empty;
+            if (scene != _lastScene)
+            {
+                _lastScene = scene;
+                if (connected && MultiplayerSession.IsActive && Level.Current != null)
+                    _introUntil = now + LevelIntroSeconds;
+            }
+
+            bool preview = UiPreview.Overlays;
+            if (preview)
+            {
+                connected = true;
+                _ping = UiPreview.Ping;
+            }
+
+            bool laggy = connected && _ping >= 150;
+            bool desync = connected && !preview && SessionSync.DesyncSeverity >= SessionIssueSeverity.Warning;
+            bool show = preview || (!MpMenuState.InMpMenu
+                && (now < _messageUntil
+                    || (_disconnected && now < _disconnectedUntil)
+                    || laggy || desync
+                    || (connected && now < _introUntil)));
+
+            _alpha = Mathf.MoveTowards(_alpha, show ? 1f : 0f, Time.unscaledDeltaTime * (show ? 6f : 2.5f));
+            _group.alpha = _alpha;
+            if (_alpha <= 0f)
+                return;
+
+            // Title: who you are playing with.
+            string title;
+            Color titleColor = NativeUiKit.Ink;
+            if (_disconnected)
+            {
+                title = "DISCONNECTED";
+                titleColor = NativeUiKit.Red;
+            }
+            else if (preview)
+            {
+                title = UiPreview.PartnerName;
+            }
+            else if (connected)
+            {
+                string name = net.CurrentPeerName;
+                title = string.IsNullOrEmpty(name) || name == "Unknown Player" ? "YOUR PARTNER" : name.ToUpperInvariant();
+                if (title.Length > 18) title = title.Substring(0, 17) + "…";
+            }
+            else
+            {
+                title = "CUPHEADS";
+            }
+            if (_title.text != title) _title.text = title;
+            _title.color = titleColor;
+
+            // Line: the newest message, else the connection itself.
+            string line;
+            Color lineColor = NativeUiKit.InkSoft;
+            if (now < _messageUntil || _disconnected)
+            {
+                line = _message;
+                if (_disconnected) lineColor = NativeUiKit.Ink;
+            }
+            else if (desync)
+            {
+                line = SessionSync.DesyncSummary;
+                lineColor = NativeUiKit.WarnInk;
+            }
+            else if (connected)
+            {
+                string character = preview ? UiPreview.PartnerCharacter
+                    : MultiplayerSession.IsActive ? MultiplayerSession.GetRemoteCharacterName() : string.Empty;
+                string ping = _ping > 0 ? _ping + " ms, " + NativeUiKit.PingWord(_ping) : "checking ping";
+                line = string.IsNullOrEmpty(character) ? ping : character + "  ·  " + ping;
+                if (!preview && ExtraParticipantTracker.TotalCount > 0)
+                    line += "  ·  +" + ExtraParticipantTracker.TotalCount + " more";
+                if (laggy) lineColor = NativeUiKit.Red;
+            }
+            else
+            {
+                line = _message;
+            }
+            if (_line.text != line) _line.text = line;
+            _line.color = lineColor;
+
+            NativeUiKit.SetSignal(_signal, _ping, connected);
+            _signal[0].transform.parent.gameObject.SetActive(connected || _disconnected);
+
+            // Grow the card for two- or three-line messages.
+            float height = Mathf.Clamp(64f + _line.preferredHeight, 96f, 150f);
+            if (Mathf.Abs(_cardRt.sizeDelta.y - height) > 0.5f)
+                _cardRt.sizeDelta = new Vector2(Width, height);
         }
 
         void OnDestroy()
         {
             if (Instance == this) Instance = null;
-        }
-
-        void SetConnectedStatus(string status)
-        {
-            if (!_trackingConnectedSession)
-                _connectedAt = Time.unscaledTime;
-
-            _trackingConnectedSession = true;
-            _showingDisconnectedState = false;
-
-            if (_titleLabel != null)
-            {
-                _titleLabel.text = "CUPHEADS";
-                _titleLabel.color = CupheadUiTheme.Gold;
-            }
-
-            if (_pingLabel != null && string.IsNullOrEmpty(_pingLabel.text))
-                _pingLabel.text = "PING ---";
-
-            if (_statusLabel != null)
-            {
-                _statusLabel.text = string.IsNullOrEmpty(status) ? "Steam P2P connected." : status;
-                _statusLabel.color = TextColour;
-            }
-
-            if (_bgImage != null)
-                _bgImage.color = BgGoodColour;
-
-            RefreshMeta();
-        }
-
-        void ApplyPing(int ms)
-        {
-            string quality;
-            Color accent;
-            Color bg;
-
-            if (ms < 80)
-            {
-                quality = "GOOD";
-                accent = GoodColour;
-                bg = BgGoodColour;
-            }
-            else if (ms < 150)
-            {
-                quality = "OKAY";
-                accent = OkayColour;
-                bg = BgOkayColour;
-            }
-            else
-            {
-                quality = "POOR";
-                accent = PoorColour;
-                bg = BgPoorColour;
-            }
-
-            if (_titleLabel != null)
-                _titleLabel.color = accent;
-
-            if (_pingLabel != null)
-            {
-                _pingLabel.text = "PING " + ms + "ms - " + quality;
-                _pingLabel.color = accent;
-            }
-
-            if (_statusLabel != null && string.IsNullOrEmpty(_statusLabel.text))
-                _statusLabel.text = "Steam P2P connected.";
-
-            if (_bgImage != null)
-                _bgImage.color = bg;
-
-            RefreshMeta();
-        }
-
-        void ApplyDisconnected(string reason)
-        {
-            _trackingConnectedSession = false;
-            _showingDisconnectedState = true;
-            _connectedAt = -1f;
-
-            if (_titleLabel != null)
-            {
-                _titleLabel.text = "CUPHEADS";
-                _titleLabel.color = DisconnectedColour;
-            }
-
-            if (_pingLabel != null)
-            {
-                _pingLabel.text = "DISCONNECTED";
-                _pingLabel.color = DisconnectedColour;
-            }
-
-            if (_statusLabel != null)
-            {
-                _statusLabel.text = string.IsNullOrEmpty(reason) ? "Connection closed." : reason;
-                _statusLabel.color = new Color(1f, 0.78f, 0.72f, 1f);
-            }
-
-            if (_bgImage != null)
-                _bgImage.color = new Color(1f, 0.58f, 0.50f, 1f);
-
-            RefreshMeta();
-        }
-
-        void RefreshMeta()
-        {
-            if (_metaLabel == null) return;
-
-            if (_showingDisconnectedState)
-            {
-                string retryHint = "Open Multiplayer to retry.";
-                if (_metaLabel.text != retryHint)
-                    _metaLabel.text = retryHint;
-                _metaLabel.color = new Color(1f, 0.74f, 0.66f, 0.92f);
-                if (_extrasLabel != null && !string.IsNullOrEmpty(_extrasLabel.text))
-                    _extrasLabel.text = string.Empty;
-                return;
-            }
-
-            if (Plugin.Net == null)
-            {
-                if (!string.IsNullOrEmpty(_metaLabel.text))
-                    _metaLabel.text = string.Empty;
-                if (_extrasLabel != null && !string.IsNullOrEmpty(_extrasLabel.text))
-                    _extrasLabel.text = string.Empty;
-                return;
-            }
-
-            if (Plugin.Net.IsConnected)
-            {
-                if (_connectedAt < 0f)
-                    _connectedAt = Time.unscaledTime;
-
-                if (_statusLabel != null)
-                {
-                    if (SessionSync.DesyncSeverity >= SessionIssueSeverity.Warning)
-                    {
-                        _statusLabel.text = SessionSync.DesyncSummary;
-                        _statusLabel.color = SessionSync.GetSeverityColor(SessionSync.DesyncSeverity);
-                    }
-                    else if (SessionSync.CompatibilitySeverity >= SessionIssueSeverity.Warning)
-                    {
-                        _statusLabel.text = SessionSync.CompatibilitySummary;
-                        _statusLabel.color = SessionSync.GetSeverityColor(SessionSync.CompatibilitySeverity);
-                    }
-                    else
-                    {
-                        _statusLabel.text = SessionSync.GetStageSummary();
-                        _statusLabel.color = TextColour;
-                    }
-                }
-
-                string line = (Plugin.Net.IsHost ? "HOST" : "CLIENT")
-                    + " "
-                    + MultiplayerSession.GetLocalCharacterName()
-                    + " | "
-                    + ShortenPeerName(Plugin.Net.CurrentPeerName);
-
-                string lobbyId = ShortLobbyId(Plugin.Net.CurrentLobbyId);
-                if (!string.IsNullOrEmpty(lobbyId))
-                    line += " | #" + lobbyId;
-
-                if (Plugin.BossHpScalingEnabled && BossHealthScaler.CurrentMultiplier > 1.0001f)
-                    line += " | HP x" + BossHealthScaler.CurrentMultiplier.ToString("0.00");
-
-                if (Plugin.Net.IsHost && Plugin.Net.PendingPeerCount > 0)
-                    line += " | +" + Plugin.Net.PendingPeerCount + " queued";
-
-                if (ExtraParticipantTracker.TotalCount > 0)
-                    line += " | +" + ExtraParticipantTracker.TotalCount + " extra";
-
-                line += " | " + FormatElapsed(Time.unscaledTime - _connectedAt);
-
-                if (_metaLabel.text != line)
-                    _metaLabel.text = line;
-                _metaLabel.color = MetaColour;
-
-                if (_extrasLabel != null)
-                {
-                    string extras = ExtraParticipantTracker.BuildStatusSummary();
-                    if (_extrasLabel.text != extras)
-                        _extrasLabel.text = extras;
-                    _extrasLabel.color = ExtraParticipantTracker.DeadCount > 0
-                        ? new Color(1f, 0.74f, 0.66f, 0.92f)
-                        : MetaColour;
-                }
-                return;
-            }
-
-            if (Plugin.Net.IsInLobby)
-            {
-                string lobbyLine = Plugin.Net.IsHost ? "HOST LOBBY" : "IN LOBBY";
-                string lobbyId = ShortLobbyId(Plugin.Net.CurrentLobbyId);
-                if (!string.IsNullOrEmpty(lobbyId))
-                    lobbyLine += " | #" + lobbyId;
-
-                string peerSummary = Plugin.Net.CurrentPeerSummary;
-                if (!string.IsNullOrEmpty(peerSummary))
-                    lobbyLine += " | " + peerSummary;
-
-                if (_metaLabel.text != lobbyLine)
-                    _metaLabel.text = lobbyLine;
-                _metaLabel.color = MetaColour;
-                if (_extrasLabel != null && !string.IsNullOrEmpty(_extrasLabel.text))
-                    _extrasLabel.text = string.Empty;
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(_metaLabel.text))
-                _metaLabel.text = string.Empty;
-            if (_extrasLabel != null && !string.IsNullOrEmpty(_extrasLabel.text))
-                _extrasLabel.text = string.Empty;
-        }
-
-        static string ShortenPeerName(string name)
-        {
-            if (string.IsNullOrEmpty(name) || name == "Unknown Player")
-                return "Peer";
-
-            return name.Length <= 14 ? name : name.Substring(0, 13) + "...";
-        }
-
-        static string ShortLobbyId(string lobbyId)
-        {
-            if (string.IsNullOrEmpty(lobbyId))
-                return string.Empty;
-
-            return lobbyId.Length <= 8 ? lobbyId : lobbyId.Substring(lobbyId.Length - 8);
-        }
-
-        static string FormatElapsed(float seconds)
-        {
-            int totalSeconds = Mathf.Max(0, Mathf.FloorToInt(seconds));
-            int minutes = totalSeconds / 60;
-            int secs = totalSeconds % 60;
-            return minutes.ToString("00") + ":" + secs.ToString("00");
-        }
-
-        static Text MakeLabel(GameObject parent, string text, int size, Color colour, Vector2 offset, Vector2 sizeDelta)
-        {
-            return CupheadUiTheme.MakeLabel(
-                parent, text, size, colour, offset, sizeDelta,
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f));
         }
     }
 }
