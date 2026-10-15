@@ -33,6 +33,7 @@ namespace CupheadOnline.Sync
         public static void Reset()
         {
             _statuses.Clear();
+            ResetOwnedStatus();
         }
 
         public static void Apply(PlayerStatusPacket pkt)
@@ -102,6 +103,7 @@ namespace CupheadOnline.Sync
             string characterName = GetCharacterName(player);
             if (player.stats.isChalice) flags |= 4;
             if (characterName == "Mugman") flags |= 8;
+            if (Level.Current != null) flags |= 16;
 
             pkt = new PlayerStatusPacket
             {
@@ -110,8 +112,118 @@ namespace CupheadOnline.Sync
                 HealthMax = (byte)Mathf.Max(healthMax, 1),
                 Flags = flags,
                 Tick = MultiplayerSession.Tick,
+                SuperMeter = player.stats.SuperMeter,
             };
             return true;
+        }
+
+        // ── Owner-authoritative stats ─────────────────────────────────────────
+        //
+        // Each machine fills a player's super meter from the hits *it*
+        // simulated, so the two copies of a player drifted apart: an EX or super
+        // the owner could fire did nothing on the other machine (or vice versa).
+        // The owner of a body (see MultiplayerSession.IsBodyOwnedLocally) now
+        // streams its meter, and the other machine adopts it. Health only ever
+        // moves up this way (heals, revives, missed absorbs); losses still arrive
+        // as the owner's replicated hits, so a status that overtakes its hit can
+        // never apply the same damage twice.
+
+        static readonly float[] LastSentMeter = { -1f, -1f };
+        static readonly int[] LastSentHealth = { -1, -1 };
+        static readonly float[] NextSendAt = { 0f, 0f };
+        static readonly float[] NextHeartbeatAt = { 0f, 0f };
+
+        static readonly System.Reflection.MethodInfo OnSuperChangedMethod =
+            HarmonyLib.AccessTools.Method(typeof(PlayerStatsManager), "OnSuperChanged");
+        static readonly System.Reflection.MethodInfo OnHealthChangedMethod =
+            HarmonyLib.AccessTools.Method(typeof(PlayerStatsManager), "OnHealthChanged");
+        // Both properties have private setters.
+        static readonly System.Reflection.MethodInfo SuperMeterSetter =
+            HarmonyLib.AccessTools.PropertySetter(typeof(PlayerStatsManager), "SuperMeter");
+        static readonly System.Reflection.MethodInfo HealthSetter =
+            HarmonyLib.AccessTools.PropertySetter(typeof(PlayerStatsManager), "Health");
+
+        /// <summary>Per frame: stream owned bodies' meter/health while it changes, plus a heartbeat.</summary>
+        public static void TickOwnedStatus()
+        {
+            if (!MultiplayerSession.IsActive || LocalDevSession.IsActive || Plugin.Net == null || !Plugin.Net.IsConnected)
+                return;
+            if (Level.Current == null)
+                return;
+
+            float now = Time.unscaledTime;
+            for (int i = 0; i < 2; i++)
+            {
+                var id = (PlayerId)i;
+                if (!MultiplayerSession.IsBodyOwnedLocally(id))
+                    continue;
+
+                var player = GetPlayerSafe(id);
+                if (player == null || player.stats == null)
+                    continue;
+
+                float meter = player.stats.SuperMeter;
+                int health = player.stats.Health;
+                bool changed = Mathf.Abs(meter - LastSentMeter[i]) >= 0.25f || health != LastSentHealth[i];
+                if (!(changed && now >= NextSendAt[i]) && now < NextHeartbeatAt[i])
+                    continue;
+
+                LastSentMeter[i] = meter;
+                LastSentHealth[i] = health;
+                NextSendAt[i] = now + 0.1f;
+                NextHeartbeatAt[i] = now + 1f;
+                PushLocalStatus(player);
+            }
+        }
+
+        /// <summary>A status from the peer that owns this body: adopt its meter (and heals).</summary>
+        public static void ApplyOwnerStats(PlayerStatusPacket pkt)
+        {
+            if (!pkt.HasLevelStats || pkt.IsDead || pkt.ParticipantId > (byte)PlayerId.PlayerTwo)
+                return;
+            if (Level.Current == null || LocalDevSession.IsActive)
+                return;
+
+            var id = (PlayerId)pkt.ParticipantId;
+            if (!MultiplayerSession.IsNetworkControlledPlayer(id) || MultiplayerSession.IsBodyOwnedLocally(id))
+                return;
+
+            var player = GetPlayerSafe(id);
+            if (player == null || player.IsDead || player.stats == null)
+                return;
+
+            var stats = player.stats;
+            try
+            {
+                if (SuperMeterSetter != null && Mathf.Abs(stats.SuperMeter - pkt.SuperMeter) > 0.01f)
+                {
+                    SuperMeterSetter.Invoke(stats, new object[] { Mathf.Clamp(pkt.SuperMeter, 0f, stats.SuperMeterMax) });
+                    if (OnSuperChangedMethod != null)
+                        OnSuperChangedMethod.Invoke(stats, new object[] { false });
+                }
+
+                if (HealthSetter != null && pkt.Health > stats.Health && pkt.Health <= stats.HealthMax)
+                {
+                    HealthSetter.Invoke(stats, new object[] { (int)pkt.Health });
+                    if (OnHealthChangedMethod != null)
+                        OnHealthChangedMethod.Invoke(stats, null);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.LogVerbose("[Status] Owner stats not applied: " + ex.Message);
+            }
+        }
+
+        static void ResetOwnedStatus()
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                LastSentMeter[i] = -1f;
+                LastSentHealth[i] = -1;
+                NextSendAt[i] = 0f;
+                NextHeartbeatAt[i] = 0f;
+            }
         }
 
         public static bool TryBuildLocalPacket(PlayerId playerId, out PlayerStatusPacket pkt)

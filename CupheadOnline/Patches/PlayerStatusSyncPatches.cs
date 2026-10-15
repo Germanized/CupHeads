@@ -69,7 +69,9 @@ namespace CupheadOnline.Patches
             var player = stats.GetComponent<AbstractPlayerController>();
             if (player == null)
                 return;
-            if (!MultiplayerSession.IsAuthoritativePlayer(player.id))
+            // Only the body's owner reports its status; the other machine's copy
+            // follows it (two writers used to overwrite each other).
+            if (!MultiplayerSession.IsBodyOwnedLocally(player.id))
                 return;
 
             ParticipantStatusTracker.PushLocalStatus(player);

@@ -1290,6 +1290,7 @@ namespace CupheadOnline.Net
 
             incoming.ParticipantId = sessionParticipantId;
             ParticipantStatusTracker.Apply(incoming);
+            ParticipantStatusTracker.ApplyOwnerStats(incoming);
 
             if (ConnectedPeerCount <= 1)
                 return;
@@ -1546,6 +1547,8 @@ namespace CupheadOnline.Net
         }
         public void SendSceneReady  (ref SceneReadyPacket   p) => Send(PacketType.SceneReady,   ref p, true);
         public void SendLevelSync   (ref LevelSyncPacket    p) => Send(PacketType.LevelSync,    ref p, true);
+        public void SendSceneRequest(ref SceneRequestPacket p) => Send(PacketType.SceneRequest, ref p, true);
+        public void SendSaveMirrorChunk(ref SaveMirrorChunkPacket p) => Send(PacketType.SaveMirrorChunk, ref p, true);
         public void SendCommMessage (ref CommMessagePacket  p) => Send(PacketType.CommMessage,  ref p, true);
         public void SendStatsReport (ref StatsReportPacket  p) => Send(PacketType.StatsReport,  ref p, true);
         public void SendStateHash   (ref StateHashPacket    p) => Send(PacketType.StateHash,    ref p, false);

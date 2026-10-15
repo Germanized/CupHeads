@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.5.1 - 2026-10-15
+
+Two-player menus and shared mechanics. Wire protocol 4: both players must update.
+
+### One save for both players
+
+- The guest now plays on a live mirror of the host's save, like couch co-op where both players share the chosen save file. Previously each machine ran on its own save, so the two screens disagreed about coins, owned weapons and charms, unlocked map paths, completed levels and NPC dialogue progress — the shop, equip cards, map and dialogue all diverged. The host streams the active slot (gzip, chunked) on connect, save selection, every save and every scene change.
+- The guest's own save is never touched: all of its slots are snapshotted when the session starts, its disk writes are suppressed for the session, and its original data is restored in memory when the session ends. A guest's own fresh equip change is kept if a mirror arrives before the host has heard about it.
+- Save-compatibility warnings about different progress, coins or map position are gone (they no longer matter); only DLC ownership is checked.
+
+### Menus
+
+- Equip cards work like couch co-op again: each player edits their own card and the menu closes once both have backed out. The old "safety" patch forced both cards ready on any close, so the first player to press Back yanked the menu away from a partner who was still choosing. The host's open/closed state now acts as a safety net if the menu opened on only one machine.
+- Scene changes the guest's game wants to make are forwarded to the host instead of silently dropped: entering a level from the guest's level prompt, walking into the shop, Retry / Exit to Map from the pause or game-over menu, continuing from the results screen. Before, if the two screens had drifted, the guest's menu waited forever. Retry and Exit to Map are honoured even mid-fight (either player can pick them in couch co-op, and the pause menu waits on the load); other loads are refused while the host is still fighting.
+- A guest choosing Exit to Title leaves the session cleanly instead of being stuck.
+- The co-op pause menu's "Player 2 leave" is blocked online (it removed the remote partner and broke both games).
+- The difficulty picked on the map now travels with the level load. Each machine used to keep its own pick, so the two players could fight the same boss on different difficulties.
+
+### Shared mechanics
+
+- Super meter is owner-authoritative: the player who owns a character streams its meter, so an EX or super fires on both machines (each used to fill the meter only from the hits it simulated). Heals and revives are mirrored too; damage still arrives only as replicated hits, so nothing is applied twice.
+- Status reports for a character now come only from its owner (both machines used to write the same entry and overwrite each other).
+- The guest's own world-map walker is reconciled against the host like it is in levels, so level nodes, NPCs and shop doors trigger on both machines.
+- King Dice's board: the host's roll is the only roll. Each machine used to roll from whichever die face was showing when it got parried, walking the markers to different spaces and handing out different free hearts.
+
 ## v1.5.0 - 2026-10-15
 
 Full audit and netcode overhaul. Wire protocol 3: both players must update (older builds are refused with a version message).

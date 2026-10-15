@@ -23,6 +23,12 @@ namespace CupheadOnline.Sync
         const float SnapDistance = 320f;
         const float BlendPerStep = 0.2f;
 
+        /// <summary>Levels: players run at 490 units/s. The world map walker moves at 2.5 units/s.</summary>
+        public const float LevelUnitScale = 1f;
+        public const float MapUnitScale = 2.5f / 490f;
+
+        static float _unitScale = LevelUnitScale;
+
         struct PositionSample
         {
             public float Time;
@@ -65,8 +71,15 @@ namespace CupheadOnline.Sync
         }
 
         /// <summary>Guest: the local body's position after a simulation step.</summary>
-        public static void RecordLocalPosition(Vector2 position)
+        public static void RecordLocalPosition(Vector2 position, float unitScale = LevelUnitScale)
         {
+            if (!Mathf.Approximately(unitScale, _unitScale))
+            {
+                // A different kind of scene (map vs level): old history is meaningless.
+                Reset();
+                _unitScale = unitScale;
+            }
+
             _positions[_positionHead] = new PositionSample { Time = Time.time, Position = position };
             _positionHead = (_positionHead + 1) % PositionHistorySize;
             if (_positionCount < PositionHistorySize)
@@ -97,7 +110,7 @@ namespace CupheadOnline.Sync
             float magnitude = error.magnitude;
             LastErrorMagnitude = magnitude;
 
-            if (magnitude < DeadZone)
+            if (magnitude < DeadZone * _unitScale)
             {
                 _pending = Vector2.zero;
                 _snapPending = false;
@@ -107,7 +120,7 @@ namespace CupheadOnline.Sync
             // Replace, never accumulate: history is shifted by every applied
             // step, so this error already excludes corrections made earlier.
             _pending = error;
-            _snapPending = magnitude > SnapDistance;
+            _snapPending = magnitude > SnapDistance * _unitScale;
         }
 
         /// <summary>
@@ -116,7 +129,8 @@ namespace CupheadOnline.Sync
         /// </summary>
         public static Vector2 Apply(Transform body)
         {
-            if (body == null || _pending.sqrMagnitude < 0.01f)
+            float minStep = 0.1f * _unitScale;
+            if (body == null || _pending.sqrMagnitude < minStep * minStep)
                 return Vector2.zero;
 
             Vector2 step = _snapPending ? _pending : _pending * BlendPerStep;

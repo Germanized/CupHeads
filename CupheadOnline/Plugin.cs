@@ -260,7 +260,6 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(CupheadInputDisplayForButtonPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(ParryPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(WeaponPrefabGetWeaponFallbackPatch));
-            PatchTracked(harmony, registeredPatchTypes, typeof(AbstractEquipUICloseOnlinePatch));
 
             // Damage authority
             PatchTracked(harmony, registeredPatchTypes, typeof(PlayerDamagePatch));
@@ -277,6 +276,16 @@ namespace CupheadOnline
             PatchTracked(harmony, registeredPatchTypes, typeof(LevelWinGatePatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PauseGuiPauseGameplayPatch));
             PatchTracked(harmony, registeredPatchTypes, typeof(PauseGuiUnpauseGameplayPatch));
+
+            // Shared save, guest scene requests, menus and board mechanics
+            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerDataSavePatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerDataSaveAllPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(SceneLoaderReloadForwardPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(SceneLoaderLoadLastMapForwardPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(PlayerManagerPlayerLeaveBlockPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollOnePatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollTwoPatch));
+            PatchTracked(harmony, registeredPatchTypes, typeof(DiceRollThreePatch));
 
             // Deterministic RNG
             PatchTracked(harmony, registeredPatchTypes, typeof(RandPatch));
@@ -402,6 +411,10 @@ namespace CupheadOnline
             add("LevelReadyGate", LevelReadyGate.Update);
             add("LevelOutcome", LevelOutcomeSync.Update);
             add("PauseSync", PauseSync.Update);
+            add("SaveMirror", SaveMirror.Update);
+            add("EquipMenuSync", EquipMenuSync.Update);
+            add("DicePalaceSync", DicePalaceSync.Update);
+            add("OwnedStatus", ParticipantStatusTracker.TickOwnedStatus);
             add("DesyncSentinel", DesyncSentinel.Update);
             add("ShotTracers", RemoteShotTracer.Update);
             add("GhostDrift", GhostDriftController.Update);
@@ -543,6 +556,6 @@ namespace CupheadOnline
     {
         public const string GUID    = "com.cupheadonline.mod";
         public const string NAME    = "CupHeads";
-        public const string VERSION = "1.5.0";
+        public const string VERSION = "1.5.1";
     }
 }

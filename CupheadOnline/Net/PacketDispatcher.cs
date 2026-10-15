@@ -102,6 +102,7 @@ namespace CupheadOnline.Net
                     }
 
                     RngSync.SetSeed(pkt.RngSeed);
+                    ApplyHostMode(pkt.Mode);
                     SceneSyncState.AllowNextClientLevelLoad();
                     SceneLoader.LoadLevel(
                         (Levels)pkt.LevelEnum,
@@ -123,6 +124,7 @@ namespace CupheadOnline.Net
                     }
 
                     RngSync.SetSeed(pkt.RngSeed);
+                    ApplyHostMode(pkt.Mode);
                     if (System.Enum.IsDefined(typeof(Levels), pkt.CurrentLevel))
                         SceneLoader.SetCurrentLevel((Levels)pkt.CurrentLevel);
 
@@ -150,7 +152,33 @@ namespace CupheadOnline.Net
                         case LevelSyncKind.Won:
                             LevelOutcomeSync.OnHostLevelWon(pkt.LevelEnum);
                             break;
+                        case LevelSyncKind.DiceRoll:
+                            DicePalaceSync.OnHostRoll(pkt.LevelEnum, pkt.Tick);
+                            break;
+                        case LevelSyncKind.EquipMenu:
+                            EquipMenuSync.OnHostEquipMenu(pkt.LevelEnum != 0);
+                            break;
                     }
+                    break;
+                }
+
+                case PacketType.SaveMirrorChunk:
+                {
+                    if (MultiplayerSession.IsHost) break;
+                    var pkt = new SaveMirrorChunkPacket();
+                    pkt.Read(r);
+                    SaveMirror.OnChunkReceived(pkt);
+                    break;
+                }
+
+                case PacketType.SceneRequest:
+                {
+                    if (!MultiplayerSession.IsHost) break;
+                    // Only the primary guest may steer scenes, not queued extras.
+                    if (sourceParticipantId != byte.MaxValue && sourceParticipantId != (byte)PlayerId.PlayerTwo) break;
+                    var pkt = new SceneRequestPacket();
+                    pkt.Read(r);
+                    SceneRequestSync.OnGuestRequest(pkt);
                     break;
                 }
 
@@ -201,6 +229,7 @@ namespace CupheadOnline.Net
                     var pkt = new PlayerStatusPacket();
                     pkt.Read(r);
                     ParticipantStatusTracker.Apply(pkt);
+                    ParticipantStatusTracker.ApplyOwnerStats(pkt);
                     break;
                 }
 
@@ -293,6 +322,17 @@ namespace CupheadOnline.Net
                     Plugin.Log.LogWarning("[Dispatcher] Unknown packet type: " + type);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Difficulty is picked on the map by whichever player opened the level
+        /// prompt, on each machine separately; the host's pick is the one that
+        /// counts, so both peers fight the same HP and patterns.
+        /// </summary>
+        static void ApplyHostMode(byte mode)
+        {
+            if (System.Enum.IsDefined(typeof(Level.Mode), (int)mode))
+                Level.SetCurrentMode((Level.Mode)mode);
         }
 
         static bool IsInLevel(int levelEnum)

@@ -15,7 +15,7 @@ This repository is intended to provide the source code, build scripts, documenta
 
 Both players must run the same CupHeads version.
 
-Since v1.4.0 the connection handshake carries the mod version and a wire-protocol number (v1.5.0 uses protocol 3). If the builds do not match, the connection is refused with a clear message telling both players which versions they have, instead of silently desyncing. Older pre-1.4.0 builds are detected and refused the same way.
+Since v1.4.0 the connection handshake carries the mod version and a wire-protocol number (v1.5.1 uses protocol 4). If the builds do not match, the connection is refused with a clear message telling both players which versions they have, instead of silently desyncing. Older pre-1.4.0 builds are detected and refused the same way.
 
 ## Features
 
@@ -44,8 +44,11 @@ Since v1.4.0 the connection handshake carries the mod version and a wire-protoco
 * Ping-adaptive jitter buffering for smooth remote movement on slower connections
 * Visual-only tracer streaks for extra (3rd+) participants' shots
 * Remote menu input routing for overworld prompts, equip cards, and shop-style menus
+* Shared save: the guest plays on a live in-memory mirror of the host's save (coins, inventory, unlocks, NPC progress all match), and the guest's own save file is never written during a session
+* Guest-initiated scene changes (level prompts, shop doors, Retry / Exit to Map, results screen) are forwarded to the host instead of being dropped
+* Owner-authoritative super meter, so EX and supers fire on both machines; host-authoritative King Dice rolls and level difficulty
 * Defensive stale-packet guards for save selection, host snapshots, weapon events, revive grants, damage events, scene loads, and status updates
-* Save compatibility checks for mismatched progress, DLC state, or setup
+* DLC compatibility check before the host starts a run
 * Stable loadout packet encoding for Cuphead weapon, super, and charm IDs
 * Defensive weapon-prefab fallback guards for stale or invalid remote weapon IDs
 * Live connection HUD with role, status, session information, and sync warnings
@@ -214,7 +217,7 @@ Keyboard and controller are both treated as live local inputs while a session is
 
 Internal scenes such as Porkrind's shop use the same routing path. The host remains the authority for scene transitions, while guest menu buttons are forwarded so Player Two can back out or interact.
 
-Online equip-card exits are guarded so mismatched two-player equipment/menu states can close cleanly instead of waiting forever for both local cards to report ready on the same machine.
+Equip cards behave like couch co-op: each player edits their own card and the menu closes once both have backed out. If the menu ever ends up open on only one machine, the guest follows the host's menu state.
 
 ## Local dev testing
 

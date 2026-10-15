@@ -15,7 +15,7 @@ namespace CupheadOnline.Net
     /// </summary>
     public static class NetProtocol
     {
-        public const byte PROTOCOL = 3;
+        public const byte PROTOCOL = 4;
     }
 
     public enum PacketType : byte
@@ -48,6 +48,8 @@ namespace CupheadOnline.Net
         StatsReport = 25,
         StateHash = 26,
         LevelSync = 27,
+        SaveMirrorChunk = 28,
+        SceneRequest = 29,
     }
 
     public enum LevelSyncKind : byte
@@ -57,6 +59,19 @@ namespace CupheadOnline.Net
         Go = 1,
         /// <summary>Host → guest: the host's copy of the level was won.</summary>
         Won = 2,
+        /// <summary>Host → guest: Dice Palace roll (LevelEnum = roll, Tick = turn).</summary>
+        DiceRoll = 3,
+        /// <summary>Host → guest: the map equip menu opened (LevelEnum = 1) or closed (0).</summary>
+        EquipMenu = 4,
+    }
+
+    public enum SceneRequestKind : byte
+    {
+        None = 0,
+        LoadLevel = 1,
+        LoadScene = 2,
+        Retry = 3,
+        ExitToMap = 4,
     }
 
     /// <summary>Named weapon-event kinds (previously magic bytes 0–4).</summary>
@@ -297,6 +312,8 @@ namespace CupheadOnline.Net
         public byte TransitionStart;
         public byte Icon;
         public byte ContextKind;
+        /// <summary>Host's Level.CurrentMode (difficulty) for the level being loaded.</summary>
+        public byte Mode;
 
         public void Write(BinaryWriter w)
         {
@@ -305,6 +322,7 @@ namespace CupheadOnline.Net
             w.Write(TransitionStart);
             w.Write(Icon);
             w.Write(ContextKind);
+            w.Write(Mode);
         }
 
         public void Read(BinaryReader r)
@@ -314,6 +332,7 @@ namespace CupheadOnline.Net
             TransitionStart = r.ReadByte();
             Icon = r.ReadByte();
             ContextKind = r.ReadByte();
+            Mode = r.ReadByte();
         }
     }
 
@@ -387,6 +406,8 @@ namespace CupheadOnline.Net
         /// <summary>Host's SceneLoader.CurrentLevel, so retries and dice/chess/graveyard flows resolve the same level.</summary>
         public int CurrentLevel;
         public byte ContextKind;
+        /// <summary>Host's Level.CurrentMode, for levels entered through a scene load (Dice Palace, chess).</summary>
+        public byte Mode;
 
         public void Write(BinaryWriter w)
         {
@@ -397,6 +418,7 @@ namespace CupheadOnline.Net
             w.Write(RngSeed);
             w.Write(CurrentLevel);
             w.Write(ContextKind);
+            w.Write(Mode);
         }
 
         public void Read(BinaryReader r)
@@ -408,6 +430,92 @@ namespace CupheadOnline.Net
             RngSeed = r.ReadUInt32();
             CurrentLevel = r.ReadInt32();
             ContextKind = r.ReadByte();
+            Mode = r.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Guest → host: the guest's game wanted to change scene (enter a level from
+    /// the map, enter the shop, retry, exit to map...) but only the host may
+    /// load scenes. The host validates and performs it, which then syncs back.
+    /// </summary>
+    public struct SceneRequestPacket : IPacket
+    {
+        public byte Kind;
+        public int Target;
+        public byte Mode;
+        public byte TransitionStart;
+        public byte TransitionEnd;
+        public byte Icon;
+        public byte ContextKind;
+
+        public SceneRequestKind RequestKind => (SceneRequestKind)Kind;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(Kind);
+            w.Write(Target);
+            w.Write(Mode);
+            w.Write(TransitionStart);
+            w.Write(TransitionEnd);
+            w.Write(Icon);
+            w.Write(ContextKind);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            Kind = r.ReadByte();
+            Target = r.ReadInt32();
+            Mode = r.ReadByte();
+            TransitionStart = r.ReadByte();
+            TransitionEnd = r.ReadByte();
+            Icon = r.ReadByte();
+            ContextKind = r.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Host → guest: one chunk of the host's gzip-compressed save (PlayerData
+    /// JSON) for the active slot. The guest plays on this mirror so coins,
+    /// inventory, unlocks and NPC progress match the host exactly.
+    /// </summary>
+    public struct SaveMirrorChunkPacket : IPacket
+    {
+        public const int MaxChunkBytes = 12 * 1024;
+
+        public ushort TransferId;
+        public byte Slot;
+        public ushort ChunkIndex;
+        public ushort ChunkCount;
+        public int TotalBytes;
+        public byte[] Data;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(TransferId);
+            w.Write(Slot);
+            w.Write(ChunkIndex);
+            w.Write(ChunkCount);
+            w.Write(TotalBytes);
+            int length = Data != null ? Data.Length : 0;
+            w.Write((ushort)length);
+            if (length > 0)
+                w.Write(Data, 0, length);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            TransferId = r.ReadUInt16();
+            Slot = r.ReadByte();
+            ChunkIndex = r.ReadUInt16();
+            ChunkCount = r.ReadUInt16();
+            TotalBytes = r.ReadInt32();
+            int length = r.ReadUInt16();
+            if (length > MaxChunkBytes)
+                throw new IOException("Save mirror chunk too large: " + length);
+            Data = r.ReadBytes(length);
+            if (Data.Length != length)
+                throw new EndOfStreamException("Truncated save mirror chunk.");
         }
     }
 
@@ -551,11 +659,15 @@ namespace CupheadOnline.Net
         public byte HealthMax;
         public byte Flags;
         public uint Tick;
+        /// <summary>The owner's super meter, so EX / super presses resolve the same on both machines.</summary>
+        public float SuperMeter;
 
         public bool IsDead => (Flags & 1) != 0;
         public bool CanDonate => (Flags & 2) != 0;
         public bool IsChalice => (Flags & 4) != 0;
         public bool IsMugman => (Flags & 8) != 0;
+        /// <summary>Health/SuperMeter are meaningful (sent from inside a level).</summary>
+        public bool HasLevelStats => (Flags & 16) != 0;
 
         public void Write(BinaryWriter w)
         {
@@ -564,6 +676,7 @@ namespace CupheadOnline.Net
             w.Write(HealthMax);
             w.Write(Flags);
             w.Write(Tick);
+            w.Write(SuperMeter);
         }
 
         public void Read(BinaryReader r)
@@ -573,6 +686,7 @@ namespace CupheadOnline.Net
             HealthMax = r.ReadByte();
             Flags = r.ReadByte();
             Tick = r.ReadUInt32();
+            SuperMeter = r.ReadSingle();
         }
     }
 

@@ -117,6 +117,19 @@ namespace CupheadOnline
         }
         public static bool IsTrackedParticipant(byte participantId) => IsActive && _participantLocality.ContainsKey(participantId);
 
+        /// <summary>
+        /// Whose machine is the authority for this body's health, death and
+        /// super meter. With latency-friendly damage (the default) every player
+        /// owns their own body; in strict mode the host owns both.
+        /// </summary>
+        public static bool IsBodyOwnedLocally(PlayerId id)
+        {
+            if (!IsActive || id == PlayerId.None || id > PlayerId.PlayerTwo)
+                return false;
+
+            return Plugin.LatencyFriendlyDamage ? IsLocalPlayer(id) : IsHost;
+        }
+
         public static void EnsureCupheadMultiplayerState()
         {
             if (!IsActive)
