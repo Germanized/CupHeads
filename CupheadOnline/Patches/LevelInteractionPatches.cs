@@ -230,31 +230,12 @@ namespace CupheadOnline.Patches
 
         static bool IsBuiltInInteractHeld(AbstractPlayerController player)
         {
-            if (player == null)
+            if (player == null || player.input == null || player.input.actions == null)
                 return false;
 
-            var inputProperty = AccessTools.Property(player.GetType(), "input");
-            if (inputProperty == null)
-                return false;
-
-            object input = inputProperty.GetValue(player, null);
-            if (input == null)
-                return false;
-
-            var actionsProperty = AccessTools.Property(input.GetType(), "actions");
-            if (actionsProperty == null)
-                return false;
-
-            object actions = actionsProperty.GetValue(input, null);
-            if (actions == null)
-                return false;
-
-            var getButtonMethod = AccessTools.Method(actions.GetType(), "GetButton", new[] { typeof(int) });
-            if (getButtonMethod == null)
-                return false;
-
-            object pressed = getButtonMethod.Invoke(actions, new object[] { 13 });
-            return pressed is bool && (bool)pressed;
+            // Goes through the Rewired routing patches, so a network-controlled
+            // slot reports its remote owner's button.
+            return player.input.actions.GetButton((int)CupheadButton.Accept);
         }
     }
 

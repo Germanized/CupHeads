@@ -45,15 +45,11 @@ namespace CupheadOnline.Sync
 
         static readonly Dictionary<byte, RemotePlayerSlotState> _slotStates =
             new Dictionary<byte, RemotePlayerSlotState>(4);
-        static readonly Dictionary<byte, PlayerStatePacket> _localAuthoritySnapshots =
-            new Dictionary<byte, PlayerStatePacket>(2);
-        static readonly Dictionary<byte, uint> _localAuthorityTicks =
-            new Dictionary<byte, uint>(2);
         static readonly HashSet<string> _failedEvents =
             new HashSet<string>();
 
-        // Reflection cache for raising VB.NET event backing delegates on LevelPlayerMotor.
-        // VB compiles `Public Event Foo As Action` to a private field named `FooEvent`.
+        // Backing delegate fields of LevelPlayerMotor's C# events (the shipped
+        // assembly is C#, so the field carries the event's own name).
         static readonly FieldInfo FiGrounded;
         static readonly FieldInfo FiDashStart;
         static readonly FieldInfo FiDashEnd;
@@ -63,10 +59,10 @@ namespace CupheadOnline.Sync
         {
             var t = typeof(LevelPlayerMotor);
             const BindingFlags bf = BindingFlags.NonPublic | BindingFlags.Instance;
-            FiGrounded  = t.GetField("OnGroundedEventEvent",  bf) ?? t.GetField("OnGroundedEvent",  bf);
-            FiDashStart = t.GetField("OnDashStartEventEvent", bf) ?? t.GetField("OnDashStartEvent", bf);
-            FiDashEnd   = t.GetField("OnDashEndEventEvent",   bf) ?? t.GetField("OnDashEndEvent",   bf);
-            FiHit       = t.GetField("OnHitEventEvent",       bf) ?? t.GetField("OnHitEvent",       bf);
+            FiGrounded  = t.GetField("OnGroundedEvent",  bf);
+            FiDashStart = t.GetField("OnDashStartEvent", bf);
+            FiDashEnd   = t.GetField("OnDashEndEvent",   bf);
+            FiHit       = t.GetField("OnHitEvent",       bf);
             MultiplayerSession.OnSessionEnded += Reset;
         }
 
@@ -95,7 +91,7 @@ namespace CupheadOnline.Sync
 
             if (MultiplayerSession.IsClient && MultiplayerSession.IsLocalPlayer(playerId))
             {
-                StoreLocalAuthoritySnapshot(pkt);
+                OwnPlayerReconciler.OnAuthoritySnapshot(pkt);
                 return;
             }
 
@@ -140,16 +136,6 @@ namespace CupheadOnline.Sync
             return state.HasLast ? (PlayerStatePacket?)state.Last : null;
         }
 
-        public static bool TryGetLocalAuthoritySnapshot(PlayerId playerId, out PlayerStatePacket snapshot)
-        {
-            return TryGetLocalAuthoritySnapshot((byte)playerId, out snapshot);
-        }
-
-        public static bool TryGetLocalAuthoritySnapshot(byte participantId, out PlayerStatePacket snapshot)
-        {
-            return _localAuthoritySnapshots.TryGetValue(participantId, out snapshot);
-        }
-
         /// <summary>
         /// Detects transitions in the proxy player's motor flags and raises the
         /// corresponding events on LevelPlayerMotor so animation reacts normally.
@@ -183,23 +169,18 @@ namespace CupheadOnline.Sync
         public static void Reset()
         {
             _slotStates.Clear();
-            _localAuthoritySnapshots.Clear();
-            _localAuthorityTicks.Clear();
             _failedEvents.Clear();
+            OwnPlayerReconciler.Reset();
         }
 
         public static void Reset(PlayerId playerId)
         {
             _slotStates.Remove((byte)playerId);
-            _localAuthoritySnapshots.Remove((byte)playerId);
-            _localAuthorityTicks.Remove((byte)playerId);
         }
 
         public static void Reset(byte participantId)
         {
             _slotStates.Remove(participantId);
-            _localAuthoritySnapshots.Remove(participantId);
-            _localAuthorityTicks.Remove(participantId);
         }
 
         static RemotePlayerSlotState GetOrCreateState(PlayerId playerId)
@@ -216,19 +197,6 @@ namespace CupheadOnline.Sync
                 _slotStates[participantId] = state;
             }
             return state;
-        }
-
-        static void StoreLocalAuthoritySnapshot(PlayerStatePacket pkt)
-        {
-            uint lastTick;
-            if (_localAuthorityTicks.TryGetValue(pkt.PlayerId, out lastTick)
-             && !NetTick.IsNewer(pkt.Tick, lastTick))
-            {
-                return;
-            }
-
-            _localAuthorityTicks[pkt.PlayerId] = pkt.Tick;
-            _localAuthoritySnapshots[pkt.PlayerId] = pkt;
         }
 
         static void RaiseEvent(LevelPlayerMotor motor, FieldInfo fi)

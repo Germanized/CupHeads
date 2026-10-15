@@ -340,6 +340,7 @@ namespace CupheadOnline.Net
             sb.AppendLine("Is Host: " + _isHost);
             sb.AppendLine("Overlay Enabled: " + IsOverlayEnabled());
             sb.AppendLine("Latency: " + Latency + "ms");
+            sb.AppendLine("Dropped Packets: " + _droppedPacketCount);
             sb.AppendLine("Lobby ID: " + (_lobbyId == CSteamID.Nil ? "(none)" : _lobbyId.m_SteamID.ToString()));
             sb.AppendLine("Peer: " + (_peerId == CSteamID.Nil ? "(none)" : FriendName(_peerId) + " [" + _peerId.m_SteamID + "]"));
             sb.AppendLine("Lobby Members: " + LobbyMemberCount);
@@ -461,8 +462,11 @@ namespace CupheadOnline.Net
         DateTime _lastReceive  = DateTime.UtcNow;
         float    _nextPingTime;
         float    _nextQueuePollTime;
-        DateTime _pingSentAt;
+        readonly System.Diagnostics.Stopwatch _pingClock = new System.Diagnostics.Stopwatch();
         bool     _pingSentPending;
+        int      _droppedPacketCount;
+        float    _lastPacketErrorLogAt = -100f;
+        const int MAX_PACKETS_PER_POLL = 1024;
         bool     _steamInitAttempted;
         bool     _steamReady;
         string   _steamUnavailableStatus = "Steam is unavailable.\nLaunch Cuphead through Steam.";
@@ -585,6 +589,14 @@ namespace CupheadOnline.Net
                 Plugin.Log.LogWarning("[SteamNet] Rejected P2P from non-lobby peer.");
                 return;
             }
+            if (!_isHost && !IsExpectedHost(req.m_steamIDRemote))
+            {
+                // Guests only ever talk to the lobby owner. Another member's
+                // session request must not hijack the host connection.
+                Plugin.Log.LogWarning("[SteamNet] Ignored P2P request from non-host member " + FriendName(req.m_steamIDRemote) + ".");
+                return;
+            }
+
             SteamNetworking.AcceptP2PSessionWithUser(req.m_steamIDRemote);
             if (_isHost)
             {
@@ -610,6 +622,19 @@ namespace CupheadOnline.Net
             }
 
             Plugin.Log.LogInfo("[SteamNet] P2P accepted from " + FriendName(req.m_steamIDRemote));
+        }
+
+        bool IsExpectedHost(CSteamID candidate)
+        {
+            if (candidate == CSteamID.Nil)
+                return false;
+            if (_peerId != CSteamID.Nil && candidate == _peerId)
+                return true;
+            if (_lobbyId == CSteamID.Nil)
+                return false;
+
+            try { return SteamMatchmaking.GetLobbyOwner(_lobbyId) == candidate; }
+            catch { return false; }
         }
 
         // ── Client flow ───────────────────────────────────────────────────────
@@ -736,10 +761,10 @@ namespace CupheadOnline.Net
                     : "Connected.\nWaiting for the host to choose a save slot.");
 
             ConnectionHUD.Show("Connected - " + (_isHost ? BuildCurrentPeerSummary() : name));
-            SessionSync.OnConnected(_isHost);
 
-            if (_isHost)
-                SessionSync.BroadcastRecoveryBundle("Peer connected or reconnected.");
+            // OnConnected also sends the host's recovery bundle (save, scene,
+            // RNG seed, enemy burst) to the newly connected guest.
+            SessionSync.OnConnected(_isHost);
         }
 
         // ── Disconnect / failure ──────────────────────────────────────────────
@@ -748,10 +773,29 @@ namespace CupheadOnline.Net
         void OnP2PConnectFailRaw(P2PSessionConnectFail_t cb)
         {
             var err = cb.m_eP2PSessionError;
+            var remote = cb.m_steamIDRemote;
             MainThreadQueue.Enqueue(() =>
             {
-                Plugin.Log.LogWarning("[SteamNet] P2P fail, error=" + err);
-                HandleDisconnect(DescribeP2PFailure(err));
+                Plugin.Log.LogWarning("[SteamNet] P2P fail with " + FriendName(remote) + ", error=" + err);
+
+                // Only the primary link ends the session; a queued or extra
+                // participant failing must not drop the active partner.
+                if (_peerId == CSteamID.Nil || remote == _peerId)
+                {
+                    HandleDisconnect(DescribeP2PFailure(err));
+                    return;
+                }
+
+                if (_isHost)
+                {
+                    try { SteamNetworking.CloseP2PSessionWithUser(remote); } catch { }
+                    if (IsLobbyMember(remote))
+                        UpdateHostPeerStage(remote, HostPeerStage.Lobby);
+                    else
+                        RemoveHostPeer(remote);
+                    ReleaseSessionParticipantIdForPeer(remote);
+                    RefreshHostLobbyRoster();
+                }
             });
         }
 
@@ -991,7 +1035,8 @@ namespace CupheadOnline.Net
             if (now > _nextPingTime)
             {
                 _nextPingTime    = now + PING_INTERVAL;
-                _pingSentAt      = DateTime.UtcNow;
+                _pingClock.Reset();
+                _pingClock.Start();
                 _pingSentPending = true;
                 RawSend(new[] { (byte)PacketType.Ping }, reliable: false);
             }
@@ -1001,8 +1046,10 @@ namespace CupheadOnline.Net
         {
             if (!_steamReady) return;
 
+            // Bounded per frame so a flood can never stall the game loop.
+            int budget = MAX_PACKETS_PER_POLL;
             uint size;
-            while (SteamNetworking.IsP2PPacketAvailable(out size))
+            while (budget-- > 0 && _steamReady && SteamNetworking.IsP2PPacketAvailable(out size))
             {
                 if (size > (uint)_recvBuf.Length)
                 {
@@ -1013,7 +1060,33 @@ namespace CupheadOnline.Net
                 uint     read;
                 CSteamID sender;
                 if (SteamNetworking.ReadP2PPacket(_recvBuf, size, out read, out sender) && read > 0)
-                    ProcessPacket(_recvBuf, (int)read, sender);
+                    ProcessPacketSafe(_recvBuf, (int)read, sender);
+            }
+        }
+
+        /// <summary>
+        /// One malformed packet or one failing game-side handler must never take
+        /// down the transport. Handler exceptions (including game-code
+        /// InvalidOperationExceptions) are logged and the packet is dropped;
+        /// only Steam API failures are treated as a Steam runtime failure.
+        /// </summary>
+        void ProcessPacketSafe(byte[] buf, int length, CSteamID sender)
+        {
+            try
+            {
+                ProcessPacket(buf, length, sender);
+            }
+            catch (Exception ex)
+            {
+                byte type = length > 0 ? buf[0] : (byte)255;
+                _droppedPacketCount++;
+                float now = Time.realtimeSinceStartup;
+                if (now - _lastPacketErrorLogAt > 5f)
+                {
+                    _lastPacketErrorLogAt = now;
+                    Plugin.Log.LogWarning("[SteamNet] Dropped packet " + (PacketType)type + " from "
+                        + FriendName(sender) + " (" + _droppedPacketCount + " total): " + ex);
+                }
             }
         }
 
@@ -1217,6 +1290,7 @@ namespace CupheadOnline.Net
 
             incoming.ParticipantId = sessionParticipantId;
             ParticipantStatusTracker.Apply(incoming);
+            ParticipantStatusTracker.ApplyOwnerStats(incoming);
 
             if (ConnectedPeerCount <= 1)
                 return;
@@ -1332,11 +1406,16 @@ namespace CupheadOnline.Net
                     RawSend(new[] { (byte)PacketType.Pong }, reliable: false);
                 return;
             }
-            if (type == (byte)PacketType.Pong && _pingSentPending && (!_isHost || sender == _peerId))
+            if (type == (byte)PacketType.Pong)
             {
-                _pingSentPending = false;
-                Latency = (int)(DateTime.UtcNow - _pingSentAt).TotalMilliseconds;
-                ConnectionHUD.UpdatePing(Latency);
+                if (_pingSentPending && (!_isHost || sender == _peerId))
+                {
+                    _pingSentPending = false;
+                    int sample = (int)_pingClock.ElapsedMilliseconds;
+                    // Smooth so one spike does not resize the jitter buffer.
+                    Latency = Latency <= 0 ? sample : (Latency * 3 + sample) / 4;
+                    ConnectionHUD.UpdatePing(Latency);
+                }
                 return;
             }
 
@@ -1467,6 +1546,9 @@ namespace CupheadOnline.Net
             return true;
         }
         public void SendSceneReady  (ref SceneReadyPacket   p) => Send(PacketType.SceneReady,   ref p, true);
+        public void SendLevelSync   (ref LevelSyncPacket    p) => Send(PacketType.LevelSync,    ref p, true);
+        public void SendSceneRequest(ref SceneRequestPacket p) => Send(PacketType.SceneRequest, ref p, true);
+        public void SendSaveMirrorChunk(ref SaveMirrorChunkPacket p) => Send(PacketType.SaveMirrorChunk, ref p, true);
         public void SendCommMessage (ref CommMessagePacket  p) => Send(PacketType.CommMessage,  ref p, true);
         public void SendStatsReport (ref StatsReportPacket  p) => Send(PacketType.StatsReport,  ref p, true);
         public void SendStateHash   (ref StateHashPacket    p) => Send(PacketType.StateHash,    ref p, false);

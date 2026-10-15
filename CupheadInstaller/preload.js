@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('installer', {
   checkInstallState: (d)  => ipcRenderer.invoke('check-install-state', d),
   openFolder:       (d)   => ipcRenderer.invoke('open-folder', d),
   launchSteam:      ()    => ipcRenderer.invoke('launch-steam'),
+  launchCuphead:    ()    => ipcRenderer.invoke('launch-cuphead'),
   verifyInstall:    (d)   => ipcRenderer.invoke('verify-install', d),
   startInstall:     (o)   => ipcRenderer.send('install', o),
   onInstallProgress: (cb) => ipcRenderer.on('install-progress', (_, d) => cb(d)),

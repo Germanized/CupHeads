@@ -20,37 +20,6 @@ namespace CupheadOnline.Patches
         }
     }
 
-    [HarmonyPatch(typeof(PlayerInput), "Init")]
-    public static class PlayerInputInitPatch
-    {
-        static void Postfix(PlayerInput __instance, PlayerId playerId)
-        {
-            if (!MultiplayerSession.IsActive)
-                return;
-
-            if (__instance == null)
-                return;
-
-            if (playerId != PlayerId.PlayerOne && playerId != PlayerId.PlayerTwo)
-                return;
-
-            try
-            {
-                var getter = AccessTools.Method(typeof(PlayerManager), "GetPlayerInput", new[] { typeof(PlayerId) });
-                if (getter == null)
-                    return;
-
-                var actions = getter.Invoke(null, new object[] { playerId });
-                Traverse.Create(__instance).Property("actions").SetValue(actions);
-            }
-            catch
-            {
-                // Rewired is not referenced by the mod directly. The universal
-                // input router handles device switching and remote overrides.
-            }
-        }
-    }
-
     [HarmonyPatch(typeof(Map), "Awake")]
     public static class MapAwakePatch
     {

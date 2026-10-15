@@ -24,7 +24,8 @@ namespace CupheadOnline.Patches
 
             var pkt = PlayerMotorPatch.BuildStatePacket(levelPlayer, levelPlayer.motor);
             Plugin.Net.SendPlayerState(ref pkt);
-            ParticipantStatusTracker.PushLocalStatus(player);
+            if (MultiplayerSession.IsBodyOwnedLocally(player.id))
+                ParticipantStatusTracker.PushLocalStatus(player);
         }
     }
 

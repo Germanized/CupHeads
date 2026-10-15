@@ -86,9 +86,10 @@ foreach ($entry in $targets.Values | Sort-Object { $_.Class + "." + $_.Method })
     }
 }
 
-# ── Reflected member names: GetField/GetMethod/GetProperty/Traverse on game types ──
+# ── Reflected member names: GetField/GetMethod/GetProperty, AccessTools.Field/
+#    Method/Property(typeof(X), "name") and FieldRefAccess<...>("name") ──
 # These are advisory (the owning type is often dynamic), so report but don't fail.
-$reflectRegex = '(GetField|GetMethod|GetProperty)\("(?<member>[A-Za-z_0-9<>]+)"'
+$reflectRegex = '(?:(?:GetField|GetMethod|GetProperty)\(\s*|AccessTools\.(?:Field|Method|Property|DeclaredField|DeclaredMethod)\(\s*typeof\([^)]*\)\s*,\s*|FieldRefAccess<[^>]+>\(\s*)"(?<member>[A-Za-z_0-9<>]+)"'
 $reflectNames = @{}
 Get-ChildItem $sourceDir -Recurse -Filter *.cs |
     Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } |
@@ -110,7 +111,9 @@ if ($reflectNames.Count -gt 0) {
         $blob = Get-Content $f.FullName -Raw
         foreach ($n in $names) {
             if (-not $foundNames.ContainsKey($n)) {
-                $probe = $n -replace '<|>', ''  # backing-field names like <stoneTime>k__BackingField
+                # Auto-property backing fields (<stoneTime>k__BackingField) are
+                # compiler-generated; the decompiled source shows the property.
+                $probe = if ($n -match '^<(.+)>k__BackingField$') { $Matches[1] } else { $n -replace '<|>', '' }
                 if ($blob -match [regex]::Escape($probe)) { $foundNames[$n] = $true }
             }
         }

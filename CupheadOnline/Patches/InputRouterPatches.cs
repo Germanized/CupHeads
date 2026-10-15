@@ -9,36 +9,23 @@ namespace CupheadOnline.Patches
 {
     internal static class UniversalInputRouter
     {
-        static readonly MethodInfo GetPlayerInputMethod =
-            AccessTools.Method(typeof(PlayerManager), "GetPlayerInput", new[] { typeof(PlayerId) });
-        static readonly Type RewiredPlayerType = AccessTools.TypeByName("Rewired.Player");
-
         internal static readonly MethodInfo RewiredGetAxisMethod =
-            RewiredPlayerType == null ? null : AccessTools.Method(RewiredPlayerType, "GetAxis", new[] { typeof(int) });
+            AccessTools.Method(typeof(Rewired.Player), "GetAxis", new[] { typeof(int) });
         internal static readonly MethodInfo RewiredGetButtonMethod =
-            RewiredPlayerType == null ? null : AccessTools.Method(RewiredPlayerType, "GetButton", new[] { typeof(int) });
+            AccessTools.Method(typeof(Rewired.Player), "GetButton", new[] { typeof(int) });
         internal static readonly MethodInfo RewiredGetButtonDownMethod =
-            RewiredPlayerType == null ? null : AccessTools.Method(RewiredPlayerType, "GetButtonDown", new[] { typeof(int) });
+            AccessTools.Method(typeof(Rewired.Player), "GetButtonDown", new[] { typeof(int) });
         internal static readonly MethodInfo RewiredGetButtonUpMethod =
-            RewiredPlayerType == null ? null : AccessTools.Method(RewiredPlayerType, "GetButtonUp", new[] { typeof(int) });
+            AccessTools.Method(typeof(Rewired.Player), "GetButtonUp", new[] { typeof(int) });
 
         static int _rawQueryDepth;
-        static uint _nextInputTick = 1;
-
-        static UniversalInputRouter()
-        {
-            MultiplayerSession.OnSessionStarted += ResetInputSequence;
-            MultiplayerSession.OnSessionEnded += ResetInputSequence;
-        }
 
         internal static bool IsRawQuery => _rawQueryDepth > 0;
 
-        internal static object GetActions(PlayerId playerId)
+        internal static Rewired.Player GetActions(PlayerId playerId)
         {
-            if (GetPlayerInputMethod == null)
-                return null;
-
-            try { return GetPlayerInputMethod.Invoke(null, new object[] { playerId }); }
+            // PlayerManager's input table is not built during very early boot.
+            try { return PlayerManager.GetPlayerInput(playerId); }
             catch { return null; }
         }
 
@@ -105,143 +92,72 @@ namespace CupheadOnline.Patches
             return true;
         }
 
+        enum ButtonQuery
+        {
+            Held,
+            Down,
+            Up,
+        }
+
+        /// <summary>Local button state merged across both Rewired players (keyboard + any pad).</summary>
         internal static bool TryGetLocalButton(int actionId, bool down, bool up, out bool value)
+        {
+            return TryGetLocalButton(PlayerId.None, actionId, down, up, out value);
+        }
+
+        internal static bool TryGetLocalButton(PlayerId playerId, int actionId, bool down, bool up, out bool value)
         {
             value = false;
             if (!IsValidButton(actionId))
                 return true;
 
-            MethodInfo method = down ? RewiredGetButtonDownMethod : up ? RewiredGetButtonUpMethod : RewiredGetButtonMethod;
-            if (method == null)
-                return false;
+            var query = down ? ButtonQuery.Down : up ? ButtonQuery.Up : ButtonQuery.Held;
+            if (playerId != PlayerId.None)
+            {
+                value = RawButton(GetActions(playerId), query, actionId);
+                return true;
+            }
 
-            object playerOne = GetActions(PlayerId.PlayerOne);
-            object playerTwo = GetActions(PlayerId.PlayerTwo);
-
-            bool one = RawBool(playerOne, method, actionId);
-            bool two = RawBool(playerTwo, method, actionId);
-            value = one || two;
+            value = RawButton(GetActions(PlayerId.PlayerOne), query, actionId)
+                 || RawButton(GetActions(PlayerId.PlayerTwo), query, actionId);
             return true;
         }
 
         internal static bool TryGetLocalAxis(int actionId, out float value)
         {
-            value = 0f;
-            if (RewiredGetAxisMethod == null)
-                return false;
-
-            float one = RawFloat(GetActions(PlayerId.PlayerOne), RewiredGetAxisMethod, actionId);
-            float two = RawFloat(GetActions(PlayerId.PlayerTwo), RewiredGetAxisMethod, actionId);
-            value = Mathf.Abs(two) > Mathf.Abs(one) ? two : one;
-            return true;
-        }
-
-        internal static InputFramePacket BuildLocalInputFrame()
-        {
-            return BuildLocalInputFrameForPlayer(PlayerId.None);
-        }
-
-        internal static InputFramePacket BuildLocalInputFrameForPlayer(PlayerId playerId)
-        {
-            uint buttons = 0;
-            Pack(playerId, CupheadButton.Jump, ref buttons);
-            Pack(playerId, CupheadButton.Shoot, ref buttons);
-            Pack(playerId, CupheadButton.Super, ref buttons);
-            Pack(playerId, CupheadButton.SwitchWeapon, ref buttons);
-            Pack(playerId, CupheadButton.Lock, ref buttons);
-            Pack(playerId, CupheadButton.Dash, ref buttons);
-            Pack(playerId, CupheadButton.Pause, ref buttons);
-            Pack(playerId, CupheadButton.NextPage, ref buttons);
-            Pack(playerId, CupheadButton.PreviousPage, ref buttons);
-            Pack(playerId, CupheadButton.Accept, ref buttons);
-            Pack(playerId, CupheadButton.Cancel, ref buttons);
-            Pack(playerId, CupheadButton.EquipMenu, ref buttons);
-            Pack(playerId, CupheadButton.MenuUp, ref buttons);
-            Pack(playerId, CupheadButton.MenuLeft, ref buttons);
-            Pack(playerId, CupheadButton.MenuDown, ref buttons);
-            Pack(playerId, CupheadButton.MenuRight, ref buttons);
-            Pack(playerId, CupheadButton.Swap, ref buttons);
-
-            float axisX;
-            float axisY;
-            TryGetLocalAxis(playerId, 0, out axisX);
-            TryGetLocalAxis(playerId, 1, out axisY);
-
-            return new InputFramePacket
-            {
-                AxisX = axisX,
-                AxisY = axisY,
-                Buttons = buttons,
-                Tick = NextInputTick(),
-            };
-        }
-
-        static uint NextInputTick()
-        {
-            unchecked
-            {
-                uint next = _nextInputTick++;
-                if (next == 0)
-                {
-                    _nextInputTick = 1;
-                    next = _nextInputTick++;
-                }
-                return next;
-            }
-        }
-
-        static void ResetInputSequence()
-        {
-            _nextInputTick = 1;
-        }
-
-        static void Pack(PlayerId playerId, CupheadButton button, ref uint buttons)
-        {
-            bool pressed;
-            if (TryGetLocalButton(playerId, (int)button, false, false, out pressed) && pressed)
-                buttons |= 1u << (int)button;
-        }
-
-        internal static bool TryGetLocalButton(PlayerId playerId, int actionId, bool down, bool up, out bool value)
-        {
-            if (playerId == PlayerId.None)
-                return TryGetLocalButton(actionId, down, up, out value);
-
-            value = false;
-            if (!IsValidButton(actionId))
-                return true;
-
-            MethodInfo method = down ? RewiredGetButtonDownMethod : up ? RewiredGetButtonUpMethod : RewiredGetButtonMethod;
-            if (method == null)
-                return false;
-
-            value = RawBool(GetActions(playerId), method, actionId);
-            return true;
+            return TryGetLocalAxis(PlayerId.None, actionId, out value);
         }
 
         internal static bool TryGetLocalAxis(PlayerId playerId, int actionId, out float value)
         {
-            if (playerId == PlayerId.None)
-                return TryGetLocalAxis(actionId, out value);
+            if (playerId != PlayerId.None)
+            {
+                value = RawAxis(GetActions(playerId), actionId);
+                return true;
+            }
 
-            value = 0f;
-            if (RewiredGetAxisMethod == null)
-                return false;
-
-            value = RawFloat(GetActions(playerId), RewiredGetAxisMethod, actionId);
+            float one = RawAxis(GetActions(PlayerId.PlayerOne), actionId);
+            float two = RawAxis(GetActions(PlayerId.PlayerTwo), actionId);
+            value = Mathf.Abs(two) > Mathf.Abs(one) ? two : one;
             return true;
         }
 
-        static bool RawBool(object player, MethodInfo method, int actionId)
+        // Raw queries bypass our own Rewired postfixes (IsRawQuery) so the
+        // local device state is read, not the routed/remote value.
+        static bool RawButton(Rewired.Player player, ButtonQuery query, int actionId)
         {
-            if (player == null || method == null)
+            if (player == null)
                 return false;
 
             _rawQueryDepth++;
             try
             {
-                object result = method.Invoke(player, new object[] { actionId });
-                return result is bool && (bool)result;
+                switch (query)
+                {
+                    case ButtonQuery.Down: return player.GetButtonDown(actionId);
+                    case ButtonQuery.Up: return player.GetButtonUp(actionId);
+                    default: return player.GetButton(actionId);
+                }
             }
             catch
             {
@@ -253,16 +169,15 @@ namespace CupheadOnline.Patches
             }
         }
 
-        static float RawFloat(object player, MethodInfo method, int actionId)
+        static float RawAxis(Rewired.Player player, int actionId)
         {
-            if (player == null || method == null)
+            if (player == null)
                 return 0f;
 
             _rawQueryDepth++;
             try
             {
-                object result = method.Invoke(player, new object[] { actionId });
-                return result is float ? (float)result : 0f;
+                return player.GetAxis(actionId);
             }
             catch
             {
@@ -280,17 +195,187 @@ namespace CupheadOnline.Patches
         }
     }
 
+    /// <summary>
+    /// Samples local input into InputFramePackets with a monotonically increasing
+    /// sequence and per-button wrapping press counters. One instance per input
+    /// source (the network pump and the same-PC dev simulator each own one).
+    /// </summary>
+    internal sealed class InputFrameBuilder
+    {
+        static readonly CupheadButton[] SampledButtons =
+        {
+            CupheadButton.Jump,
+            CupheadButton.Shoot,
+            CupheadButton.Super,
+            CupheadButton.SwitchWeapon,
+            CupheadButton.Lock,
+            CupheadButton.Dash,
+            CupheadButton.Pause,
+            CupheadButton.NextPage,
+            CupheadButton.PreviousPage,
+            CupheadButton.Accept,
+            CupheadButton.Cancel,
+            CupheadButton.EquipMenu,
+            CupheadButton.MenuUp,
+            CupheadButton.MenuLeft,
+            CupheadButton.MenuDown,
+            CupheadButton.MenuRight,
+            CupheadButton.Swap,
+        };
+
+        readonly int[] _counters = new int[32];
+        uint _lastButtons;
+        uint _nextTick = 1;
+
+        /// <param name="muted">
+        /// Report neutral input (used while paused). Held state is still tracked
+        /// so a button held through the pause is not reported as a new press
+        /// when input resumes.
+        /// </param>
+        internal InputFramePacket Build(PlayerId source, bool muted)
+        {
+            uint buttons = 0u;
+            uint pressedNow = 0u;
+
+            for (int i = 0; i < SampledButtons.Length; i++)
+            {
+                int action = (int)SampledButtons[i];
+                uint mask = 1u << action;
+
+                bool held;
+                bool down;
+                UniversalInputRouter.TryGetLocalButton(source, action, false, false, out held);
+                UniversalInputRouter.TryGetLocalButton(source, action, true, false, out down);
+
+                // A tap that starts and ends inside one frame still reports
+                // GetButtonDown, so count it even if GetButton is already false.
+                if (held || down)
+                    buttons |= mask;
+                if (down || (held && (_lastButtons & mask) == 0u))
+                    pressedNow |= mask;
+            }
+
+            _lastButtons = buttons;
+            if (muted)
+            {
+                buttons = 0u;
+                pressedNow = 0u;
+            }
+
+            ulong packedCounters = 0UL;
+            for (int b = 0; b < 32; b++)
+            {
+                if ((pressedNow & (1u << b)) != 0u)
+                    _counters[b] = (_counters[b] + 1) & 3;
+                packedCounters |= (ulong)_counters[b] << (b * 2);
+            }
+
+            float axisX = 0f;
+            float axisY = 0f;
+            if (!muted)
+            {
+                UniversalInputRouter.TryGetLocalAxis(source, (int)CupheadButton.MoveHorizontal, out axisX);
+                UniversalInputRouter.TryGetLocalAxis(source, (int)CupheadButton.MoveVertical, out axisY);
+            }
+
+            return new InputFramePacket
+            {
+                AxisX = axisX,
+                AxisY = axisY,
+                Buttons = buttons,
+                PressCounters = packedCounters,
+                Tick = NextTick(),
+            };
+        }
+
+        internal void Reset()
+        {
+            for (int i = 0; i < _counters.Length; i++)
+                _counters[i] = 0;
+            _lastButtons = 0u;
+            _nextTick = 1;
+        }
+
+        uint NextTick()
+        {
+            unchecked
+            {
+                uint next = _nextTick++;
+                if (next == 0u)
+                {
+                    _nextTick = 2;
+                    next = 1;
+                }
+                return next;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Streams local input to the peer: immediately whenever it changes, plus a
+    /// heartbeat so the receiver's stall detector and loss recovery stay fed.
+    /// Input is muted while the local game is paused inside a level, so pause-
+    /// menu navigation never makes the remote copy of this player jump or shoot.
+    /// </summary>
     internal static class ClientInputFramePump
     {
+        const float HeartbeatInterval = 1f / 30f;
+        const float AxisChangeThreshold = 0.05f;
+
+        static readonly InputFrameBuilder Builder = new InputFrameBuilder();
+        static InputFramePacket _lastSent;
+        static bool _hasSent;
+        static float _lastSentAt;
+
+        static ClientInputFramePump()
+        {
+            MultiplayerSession.OnSessionStarted += Reset;
+            MultiplayerSession.OnSessionEnded += Reset;
+        }
+
         internal static void Update()
         {
-            if (!MultiplayerSession.IsActive)
-                return;
-            if (Plugin.Net == null || !Plugin.Net.IsConnected)
+            if (!MultiplayerSession.IsActive || Plugin.Net == null || !Plugin.Net.IsConnected)
                 return;
 
-            var packet = UniversalInputRouter.BuildLocalInputFrame();
+            var packet = Builder.Build(PlayerId.None, ShouldMuteGameplayInput());
+
+            float now = Time.realtimeSinceStartup;
+            bool changed = !_hasSent
+                || packet.Buttons != _lastSent.Buttons
+                || packet.PressCounters != _lastSent.PressCounters
+                || Mathf.Abs(packet.AxisX - _lastSent.AxisX) > AxisChangeThreshold
+                || Mathf.Abs(packet.AxisY - _lastSent.AxisY) > AxisChangeThreshold;
+
+            if (!changed && now - _lastSentAt < HeartbeatInterval)
+                return;
+
             Plugin.Net.SendInputFrame(ref packet);
+            _lastSent = packet;
+            _hasSent = true;
+            _lastSentAt = now;
+
+            if (MultiplayerSession.IsClient)
+                OwnPlayerReconciler.RecordSentInput(packet.Tick);
+        }
+
+        static bool ShouldMuteGameplayInput()
+        {
+            try
+            {
+                return Level.Current != null && PauseManager.state == PauseManager.State.Paused;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        static void Reset()
+        {
+            Builder.Reset();
+            _hasSent = false;
+            _lastSentAt = 0f;
         }
     }
 

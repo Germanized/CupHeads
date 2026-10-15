@@ -24,11 +24,7 @@ namespace CupheadOnline.Patches
                 return true;
 
             if (!MultiplayerSession.IsNetworkControlledPlayer(player.id))
-            {
-                if (MultiplayerSession.IsLocalPlayer(player.id))
-                    MultiplayerSession.IncrementTick();
                 return true;
-            }
 
             RemoteInputDriver.Tick(player.id);
 
@@ -64,7 +60,17 @@ namespace CupheadOnline.Patches
                 AnimState = 0,
                 Tick = MultiplayerSession.Tick,
             };
+
+            if (authoritativeBuiltIn && MultiplayerSession.IsNetworkControlledPlayer(player.id))
+                RemoteInputDriver.TryGetInputAck((byte)player.id, out pkt.AckInputSeq, out pkt.AckAgeMs);
+
             Plugin.Net.SendPlayerState(ref pkt);
+
+            if (!authoritativeBuiltIn && MultiplayerSession.IsClient)
+            {
+                OwnPlayerReconciler.Apply(__instance.transform);
+                OwnPlayerReconciler.RecordLocalPosition(__instance.transform.position);
+            }
         }
 
         static void ApplyRemoteState(PlanePlayerMotor motor, byte participantId)

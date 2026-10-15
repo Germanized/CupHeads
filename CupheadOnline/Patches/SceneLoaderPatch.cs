@@ -14,6 +14,12 @@ namespace CupheadOnline.Patches
 
         internal static void ResetTransientSyncState()
         {
+            LevelReadyGate.OnSceneLoadStarted();
+            LevelOutcomeSync.OnSceneChanged();
+            PauseSync.OnSceneChanged();
+            SaveMirror.OnSceneLoadStarted();
+            EquipMenuSync.OnSceneChanged();
+            DicePalaceSync.OnSceneChanged();
             EnemySyncManager.Reset();
             DamageAuthority.ResetAll();
             ParticipantReviveController.Reset();
@@ -76,10 +82,27 @@ namespace CupheadOnline.Patches
         typeof(Levels), typeof(SceneLoader.Transition), typeof(SceneLoader.Icon), typeof(SceneLoader.Context))]
     public static class SceneLoaderLevelsPatch
     {
-        static bool Prefix(Levels level)
+        static bool Prefix(
+            Levels level,
+            SceneLoader.Transition transitionStart,
+            SceneLoader.Icon icon,
+            SceneLoader.Context context,
+            out bool __state)
         {
+            __state = false;
+
+            // The game ignores load requests while a load is already running;
+            // do not broadcast or wipe sync state for a request that won't happen.
+            if (SceneLoader.CurrentlyLoading)
+                return true;
+
             if (!SceneSyncState.CanStartSceneLoadAsThisPeer("level " + level))
+            {
+                // The guest's own game picked this level (its level prompt,
+                // a retry...). Ask the host to do it instead of dropping it.
+                SceneRequestSync.ForwardLevel(level, transitionStart, icon, context);
                 return false;
+            }
 
             if (!MultiplayerSession.IsActive) return true;
 
@@ -89,19 +112,26 @@ namespace CupheadOnline.Patches
             if (Plugin.Net == null || !Plugin.Net.IsConnected) return true;
 
             SceneSyncState.SuppressMenuSceneBroadcast = true;
+            __state = true;
 
             var pkt = new SceneChangePacket
             {
-                LevelEnum = (int)level,
-                RngSeed   = RngSync.NextSeed(),
+                LevelEnum       = (int)level,
+                RngSeed         = RngSync.NextSeed(),
+                TransitionStart = (byte)transitionStart,
+                Icon            = (byte)icon,
+                ContextKind     = SceneContextCodec.Encode(context),
+                Mode            = (byte)Level.CurrentMode,
             };
             Plugin.Net.SendSceneChange(ref pkt);
+            SaveMirror.QueueHostBroadcast("level load");
             return true;
         }
 
-        static void Postfix()
+        static void Postfix(bool __state)
         {
-            SceneSyncState.SuppressMenuSceneBroadcast = false;
+            if (__state)
+                SceneSyncState.SuppressMenuSceneBroadcast = false;
         }
     }
 
@@ -113,10 +143,25 @@ namespace CupheadOnline.Patches
             Scenes scene,
             SceneLoader.Transition transitionStart,
             SceneLoader.Transition transitionEnd,
-            SceneLoader.Icon icon)
+            SceneLoader.Icon icon,
+            SceneLoader.Context context)
         {
+            if (SceneLoader.CurrentlyLoading)
+                return true;
+
             if (!SceneSyncState.CanStartSceneLoadAsThisPeer("scene " + scene))
+            {
+                // A guest heading to the title or slot screen on its own is
+                // leaving the co-op session; anything else goes to the host.
+                if (SceneRequestSync.IsGuest && SceneRequestSync.IsLeaveScene(scene))
+                {
+                    SceneRequestSync.LeaveSessionForLocalScene(scene);
+                    return true;
+                }
+
+                SceneRequestSync.ForwardScene(scene, transitionStart, transitionEnd, icon, context);
                 return false;
+            }
 
             if (!MultiplayerSession.IsActive) return true;
 
@@ -133,9 +178,45 @@ namespace CupheadOnline.Patches
                 TransitionEnd   = (byte)transitionEnd,
                 Icon            = (byte)icon,
                 RngSeed         = RngSync.NextSeed(),
+                CurrentLevel    = (int)SceneLoader.CurrentLevel,
+                ContextKind     = SceneContextCodec.Encode(context),
+                Mode            = (byte)Level.CurrentMode,
             };
             Plugin.Net.SendMenuSceneChange(ref pkt);
+            SaveMirror.QueueHostBroadcast("scene load");
             return true;
+        }
+    }
+
+    /// <summary>
+    /// ReloadLevel and LoadLastMap run game-side bookkeeping (tower/dice/chess
+    /// state, king-of-games counter, a save) before loading. On the guest they
+    /// only ever come from its own Retry / Exit menus, so they are forwarded to
+    /// the host as a whole instead of half-running locally.
+    /// </summary>
+    [HarmonyPatch(typeof(SceneLoader), "ReloadLevel")]
+    public static class SceneLoaderReloadForwardPatch
+    {
+        static bool Prefix()
+        {
+            if (!SceneRequestSync.IsGuest)
+                return true;
+
+            SceneRequestSync.ForwardRetry();
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(SceneLoader), "LoadLastMap")]
+    public static class SceneLoaderLoadLastMapForwardPatch
+    {
+        static bool Prefix()
+        {
+            if (!SceneRequestSync.IsGuest)
+                return true;
+
+            SceneRequestSync.ForwardExitToMap();
+            return false;
         }
     }
 }

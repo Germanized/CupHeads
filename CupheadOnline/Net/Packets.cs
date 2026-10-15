@@ -15,7 +15,7 @@ namespace CupheadOnline.Net
     /// </summary>
     public static class NetProtocol
     {
-        public const byte PROTOCOL = 2;
+        public const byte PROTOCOL = 4;
     }
 
     public enum PacketType : byte
@@ -47,6 +47,31 @@ namespace CupheadOnline.Net
         CommMessage = 24,
         StatsReport = 25,
         StateHash = 26,
+        LevelSync = 27,
+        SaveMirrorChunk = 28,
+        SceneRequest = 29,
+    }
+
+    public enum LevelSyncKind : byte
+    {
+        None = 0,
+        /// <summary>Host → guest: both peers are loaded, start the fight now.</summary>
+        Go = 1,
+        /// <summary>Host → guest: the host's copy of the level was won.</summary>
+        Won = 2,
+        /// <summary>Host → guest: Dice Palace roll (LevelEnum = roll, Tick = turn).</summary>
+        DiceRoll = 3,
+        /// <summary>Host → guest: the map equip menu opened (LevelEnum = 1) or closed (0).</summary>
+        EquipMenu = 4,
+    }
+
+    public enum SceneRequestKind : byte
+    {
+        None = 0,
+        LoadLevel = 1,
+        LoadScene = 2,
+        Retry = 3,
+        ExitToMap = 4,
     }
 
     /// <summary>Named weapon-event kinds (previously magic bytes 0–4).</summary>
@@ -65,6 +90,8 @@ namespace CupheadOnline.Net
         GuestReady = 1,
         GuestUnready = 2,
         RequestRecovery = 3,
+        PauseOn = 4,
+        PauseOff = 5,
     }
 
     public struct PlayerStatePacket : IPacket
@@ -77,6 +104,13 @@ namespace CupheadOnline.Net
         public byte Flags;
         public byte AnimState;
         public uint Tick;
+        /// <summary>
+        /// Host → guest, for the guest's own body: the newest input sequence the
+        /// host had applied when this state was taken (0 = not input-driven).
+        /// </summary>
+        public uint AckInputSeq;
+        /// <summary>Game-time milliseconds the host had been running AckInputSeq for.</summary>
+        public ushort AckAgeMs;
 
         public bool Grounded => (Flags & 1) != 0;
         public bool Dashing => (Flags & 2) != 0;
@@ -96,6 +130,8 @@ namespace CupheadOnline.Net
             w.Write(Flags);
             w.Write(AnimState);
             w.Write(Tick);
+            w.Write(AckInputSeq);
+            w.Write(AckAgeMs);
         }
 
         public void Read(BinaryReader r)
@@ -108,6 +144,8 @@ namespace CupheadOnline.Net
             Flags = r.ReadByte();
             AnimState = r.ReadByte();
             Tick = r.ReadUInt32();
+            AckInputSeq = r.ReadUInt32();
+            AckAgeMs = r.ReadUInt16();
         }
     }
 
@@ -116,15 +154,25 @@ namespace CupheadOnline.Net
         public float AxisX;
         public float AxisY;
         public uint Buttons;
+        /// <summary>
+        /// 2-bit wrapping press counter per button (button N lives in bits 2N..2N+1).
+        /// A press that starts and ends between two packets, or whose packet is
+        /// lost, still shows up as a counter change in the next packet, so taps
+        /// (jump, dash, parry) are never silently dropped on a lossy link.
+        /// </summary>
+        public ulong PressCounters;
         public uint Tick;
 
         public bool IsPressed(CupheadButton btn) => (Buttons & (1u << (int)btn)) != 0;
+
+        public int GetPressCounter(int buttonIndex) => (int)((PressCounters >> (buttonIndex * 2)) & 3UL);
 
         public void Write(BinaryWriter w)
         {
             w.Write(AxisX);
             w.Write(AxisY);
             w.Write(Buttons);
+            w.Write(PressCounters);
             w.Write(Tick);
         }
 
@@ -133,6 +181,7 @@ namespace CupheadOnline.Net
             AxisX = r.ReadSingle();
             AxisY = r.ReadSingle();
             Buttons = r.ReadUInt32();
+            PressCounters = r.ReadUInt64();
             Tick = r.ReadUInt32();
         }
     }
@@ -227,21 +276,63 @@ namespace CupheadOnline.Net
         }
     }
 
+    /// <summary>
+    /// SceneLoader.Context kinds that are replicated with scene changes. Only
+    /// GauntletContext exists in the game today (chess gauntlet runs).
+    /// </summary>
+    public static class SceneContextCodec
+    {
+        public const byte None = 0;
+        public const byte GauntletIncomplete = 1;
+        public const byte GauntletComplete = 2;
+
+        public static byte Encode(SceneLoader.Context context)
+        {
+            var gauntlet = context as GauntletContext;
+            if (gauntlet == null)
+                return None;
+            return gauntlet.complete ? GauntletComplete : GauntletIncomplete;
+        }
+
+        public static SceneLoader.Context Decode(byte kind)
+        {
+            switch (kind)
+            {
+                case GauntletIncomplete: return new GauntletContext(false);
+                case GauntletComplete: return new GauntletContext(true);
+                default: return null;
+            }
+        }
+    }
+
     public struct SceneChangePacket : IPacket
     {
         public int LevelEnum;
         public uint RngSeed;
+        public byte TransitionStart;
+        public byte Icon;
+        public byte ContextKind;
+        /// <summary>Host's Level.CurrentMode (difficulty) for the level being loaded.</summary>
+        public byte Mode;
 
         public void Write(BinaryWriter w)
         {
             w.Write(LevelEnum);
             w.Write(RngSeed);
+            w.Write(TransitionStart);
+            w.Write(Icon);
+            w.Write(ContextKind);
+            w.Write(Mode);
         }
 
         public void Read(BinaryReader r)
         {
             LevelEnum = r.ReadInt32();
             RngSeed = r.ReadUInt32();
+            TransitionStart = r.ReadByte();
+            Icon = r.ReadByte();
+            ContextKind = r.ReadByte();
+            Mode = r.ReadByte();
         }
     }
 
@@ -312,6 +403,11 @@ namespace CupheadOnline.Net
         public byte TransitionEnd;
         public byte Icon;
         public uint RngSeed;
+        /// <summary>Host's SceneLoader.CurrentLevel, so retries and dice/chess/graveyard flows resolve the same level.</summary>
+        public int CurrentLevel;
+        public byte ContextKind;
+        /// <summary>Host's Level.CurrentMode, for levels entered through a scene load (Dice Palace, chess).</summary>
+        public byte Mode;
 
         public void Write(BinaryWriter w)
         {
@@ -320,6 +416,9 @@ namespace CupheadOnline.Net
             w.Write(TransitionEnd);
             w.Write(Icon);
             w.Write(RngSeed);
+            w.Write(CurrentLevel);
+            w.Write(ContextKind);
+            w.Write(Mode);
         }
 
         public void Read(BinaryReader r)
@@ -329,6 +428,94 @@ namespace CupheadOnline.Net
             TransitionEnd = r.ReadByte();
             Icon = r.ReadByte();
             RngSeed = r.ReadUInt32();
+            CurrentLevel = r.ReadInt32();
+            ContextKind = r.ReadByte();
+            Mode = r.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Guest → host: the guest's game wanted to change scene (enter a level from
+    /// the map, enter the shop, retry, exit to map...) but only the host may
+    /// load scenes. The host validates and performs it, which then syncs back.
+    /// </summary>
+    public struct SceneRequestPacket : IPacket
+    {
+        public byte Kind;
+        public int Target;
+        public byte Mode;
+        public byte TransitionStart;
+        public byte TransitionEnd;
+        public byte Icon;
+        public byte ContextKind;
+
+        public SceneRequestKind RequestKind => (SceneRequestKind)Kind;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(Kind);
+            w.Write(Target);
+            w.Write(Mode);
+            w.Write(TransitionStart);
+            w.Write(TransitionEnd);
+            w.Write(Icon);
+            w.Write(ContextKind);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            Kind = r.ReadByte();
+            Target = r.ReadInt32();
+            Mode = r.ReadByte();
+            TransitionStart = r.ReadByte();
+            TransitionEnd = r.ReadByte();
+            Icon = r.ReadByte();
+            ContextKind = r.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Host → guest: one chunk of the host's gzip-compressed save (PlayerData
+    /// JSON) for the active slot. The guest plays on this mirror so coins,
+    /// inventory, unlocks and NPC progress match the host exactly.
+    /// </summary>
+    public struct SaveMirrorChunkPacket : IPacket
+    {
+        public const int MaxChunkBytes = 12 * 1024;
+
+        public ushort TransferId;
+        public byte Slot;
+        public ushort ChunkIndex;
+        public ushort ChunkCount;
+        public int TotalBytes;
+        public byte[] Data;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(TransferId);
+            w.Write(Slot);
+            w.Write(ChunkIndex);
+            w.Write(ChunkCount);
+            w.Write(TotalBytes);
+            int length = Data != null ? Data.Length : 0;
+            w.Write((ushort)length);
+            if (length > 0)
+                w.Write(Data, 0, length);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            TransferId = r.ReadUInt16();
+            Slot = r.ReadByte();
+            ChunkIndex = r.ReadUInt16();
+            ChunkCount = r.ReadUInt16();
+            TotalBytes = r.ReadInt32();
+            int length = r.ReadUInt16();
+            if (length > MaxChunkBytes)
+                throw new IOException("Save mirror chunk too large: " + length);
+            Data = r.ReadBytes(length);
+            if (Data.Length != length)
+                throw new EndOfStreamException("Truncated save mirror chunk.");
         }
     }
 
@@ -413,6 +600,7 @@ namespace CupheadOnline.Net
         public int CurrentLevel;
         public int CurrentMapScene;
         public uint HostTick;
+        public uint RngSeed;
         public string SceneName;
 
         public bool HasTrackedSave => (Flags & 1) != 0;
@@ -427,6 +615,7 @@ namespace CupheadOnline.Net
             w.Write(CurrentLevel);
             w.Write(CurrentMapScene);
             w.Write(HostTick);
+            w.Write(RngSeed);
             w.Write(SceneName ?? string.Empty);
         }
 
@@ -438,6 +627,7 @@ namespace CupheadOnline.Net
             CurrentLevel = r.ReadInt32();
             CurrentMapScene = r.ReadInt32();
             HostTick = r.ReadUInt32();
+            RngSeed = r.ReadUInt32();
             SceneName = r.ReadString();
         }
     }
@@ -469,11 +659,15 @@ namespace CupheadOnline.Net
         public byte HealthMax;
         public byte Flags;
         public uint Tick;
+        /// <summary>The owner's super meter, so EX / super presses resolve the same on both machines.</summary>
+        public float SuperMeter;
 
         public bool IsDead => (Flags & 1) != 0;
         public bool CanDonate => (Flags & 2) != 0;
         public bool IsChalice => (Flags & 4) != 0;
         public bool IsMugman => (Flags & 8) != 0;
+        /// <summary>Health/SuperMeter are meaningful (sent from inside a level).</summary>
+        public bool HasLevelStats => (Flags & 16) != 0;
 
         public void Write(BinaryWriter w)
         {
@@ -482,6 +676,7 @@ namespace CupheadOnline.Net
             w.Write(HealthMax);
             w.Write(Flags);
             w.Write(Tick);
+            w.Write(SuperMeter);
         }
 
         public void Read(BinaryReader r)
@@ -491,6 +686,7 @@ namespace CupheadOnline.Net
             HealthMax = r.ReadByte();
             Flags = r.ReadByte();
             Tick = r.ReadUInt32();
+            SuperMeter = r.ReadSingle();
         }
     }
 
@@ -551,6 +747,30 @@ namespace CupheadOnline.Net
 
         public void Read(BinaryReader r)
         {
+            LevelEnum = r.ReadInt32();
+            Tick = r.ReadUInt32();
+        }
+    }
+
+    /// <summary>Host → guest level lifecycle signal (start gate release, knockout).</summary>
+    public struct LevelSyncPacket : IPacket
+    {
+        public byte Kind;
+        public int LevelEnum;
+        public uint Tick;
+
+        public LevelSyncKind SyncKind => (LevelSyncKind)Kind;
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write(Kind);
+            w.Write(LevelEnum);
+            w.Write(Tick);
+        }
+
+        public void Read(BinaryReader r)
+        {
+            Kind = r.ReadByte();
             LevelEnum = r.ReadInt32();
             Tick = r.ReadUInt32();
         }

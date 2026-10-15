@@ -67,6 +67,7 @@ namespace CupheadOnline.Sync
         public static int LocalRetries => _localRetries;
         public static int LocalParries => _localParries;
         public static bool HasTrackedSave => _hasTrackedSave;
+        public static byte TrackedSaveSlot => _trackedSaveSlot;
         public static ushort SaveRevision => _saveRevision;
         public static bool IsLocalReady => _hasTrackedSave;
         public static bool IsRemoteReady => _hasTrackedSave;
@@ -173,6 +174,7 @@ namespace CupheadOnline.Sync
 
             CaptureLocalSaveProfile(pkt.SlotIndex, pkt.IsEmpty);
             EvaluateCompatibility();
+            SaveMirror.QueueHostBroadcast("save slot selected");
         }
 
         public static void ApplyRemoteSaveSelection(ref SaveSlotSyncPacket pkt)
@@ -277,6 +279,14 @@ namespace CupheadOnline.Sync
                     _recoveryRequestCount++;
                     BroadcastRecoveryBundle("Guest requested a resync.");
                     break;
+
+                case SessionSignalKind.PauseOn:
+                    PauseSync.OnRemotePause(true);
+                    break;
+
+                case SessionSignalKind.PauseOff:
+                    PauseSync.OnRemotePause(false);
+                    break;
             }
         }
 
@@ -370,6 +380,7 @@ namespace CupheadOnline.Sync
                 CurrentLevel = Level.Current != null ? (int)Level.Current.CurrentLevel : -1,
                 CurrentMapScene = PlayerData.Data != null ? (int)PlayerData.Data.CurrentMap : -1,
                 HostTick = MultiplayerSession.Tick,
+                RngSeed = RngSync.CurrentSeed,
                 SceneName = GetActiveSceneName(),
             };
 
@@ -385,6 +396,7 @@ namespace CupheadOnline.Sync
             {
                 RebroadcastTrackedSaveSelection();
                 BroadcastSelectedSaveProfile();
+                SaveMirror.QueueHostBroadcast("recovery bundle: " + reason);
             }
 
             var start = new SessionStartPacket
@@ -598,7 +610,12 @@ namespace CupheadOnline.Sync
             sb.AppendLine("Stage: " + GetStageSummary());
             sb.AppendLine("Tracked Save: " + (_hasTrackedSave ? (_trackedSaveSlot + 1).ToString() : "(none)"));
             sb.AppendLine("Save Revision: " + _saveRevision);
-            sb.AppendLine("Ready Gate: disabled");
+            sb.AppendLine("Session Tick: " + MultiplayerSession.Tick);
+            sb.AppendLine("Level Ready Gate: " + (Plugin.EnableLevelReadyGate ? (LevelReadyGate.IsHolding ? "holding" : "on") : "off"));
+            sb.AppendLine("Shared Pause: " + (Plugin.EnableSharedPause ? (PauseSync.IsFrozenForPartner ? "frozen for partner" : "on") : "off"));
+            sb.AppendLine("Knockout Gate: " + (LevelOutcomeSync.IsLocalWinParked ? "waiting for host" : "idle"));
+            sb.AppendLine("Own-Body Correction: " + OwnPlayerReconciler.LastErrorMagnitude.ToString("0.0") + " units");
+            sb.AppendLine("RNG Seed: " + RngSync.CurrentSeed.ToString("X8"));
             sb.AppendLine("Players: " + MultiplayerSession.ActivePlayerCount);
             sb.AppendLine("Local Character: " + MultiplayerSession.GetLocalCharacterName());
             sb.AppendLine("Remote Character: " + MultiplayerSession.GetRemoteCharacterName());
@@ -776,49 +793,32 @@ namespace CupheadOnline.Sync
             var issues = new List<string>();
             SessionIssueSeverity severity = SessionIssueSeverity.None;
 
-            bool remoteNeedsDlc = (Scenes)remote.CurrentMapScene == Scenes.scene_map_world_DLC;
-            if (remoteNeedsDlc && !DLCManager.DLCEnabled())
+            // The guest plays on a mirror of the host's save (SaveMirror), so
+            // differences in progress, coins or map position between the two
+            // players' own saves no longer matter. Only DLC ownership can still
+            // stop the run: the DLC world, Ms. Chalice and DLC items need it on
+            // both machines.
+            bool hostUsesDlc = (Scenes)(MultiplayerSession.IsHost ? local.CurrentMapScene : remote.CurrentMapScene) == Scenes.scene_map_world_DLC;
+            bool localHasDlc = local.DlcEnabled;
+            bool remoteHasDlc = remote.DlcEnabled;
+            if (hostUsesDlc && !(localHasDlc && remoteHasDlc))
             {
                 severity = SessionIssueSeverity.Error;
-                issues.Add("DLC world selected but DLC is not enabled locally.");
+                issues.Add(localHasDlc
+                    ? "Your partner needs The Delicious Last Course for this save."
+                    : "This save is in the DLC world, but the DLC is not installed here.");
             }
-
-            if (!remote.IsEmpty && local.IsEmpty)
+            else if (localHasDlc != remoteHasDlc)
             {
-                severity = MaxSeverity(severity, SessionIssueSeverity.Warning);
-                issues.Add("Host save is populated, but your matching slot is empty.");
-            }
-
-            float completionDelta = Mathf.Abs(remote.CompletionPct - local.CompletionPct);
-            if (completionDelta >= 20f)
-            {
-                severity = MaxSeverity(severity, SessionIssueSeverity.Warning);
-                issues.Add("Base-game progression differs by " + completionDelta.ToString("0") + "%.");
-            }
-
-            float dlcDelta = Mathf.Abs(remote.CompletionPctDlc - local.CompletionPctDlc);
-            if (dlcDelta >= 15f)
-            {
-                severity = MaxSeverity(severity, SessionIssueSeverity.Warning);
-                issues.Add("DLC progression differs by " + dlcDelta.ToString("0") + "%.");
-            }
-
-            int coinDelta = Mathf.Abs(remote.Coins - local.Coins);
-            if (coinDelta >= 10)
-            {
-                severity = MaxSeverity(severity, SessionIssueSeverity.Warning);
-                issues.Add("Coin totals differ by " + coinDelta + ".");
-            }
-
-            if (remote.CurrentMapScene != local.CurrentMapScene && !remote.IsEmpty && !local.IsEmpty)
-            {
-                severity = MaxSeverity(severity, SessionIssueSeverity.Info);
-                issues.Add("Current map progress does not match.");
+                severity = SessionIssueSeverity.Warning;
+                issues.Add("Only one player has the DLC; DLC items and Ms. Chalice fall back to base-game gear.");
             }
 
             if (issues.Count == 0)
             {
-                _compatibilitySummary = "Compatibility looks good.";
+                _compatibilitySummary = MultiplayerSession.IsHost
+                    ? "Compatibility looks good. The guest plays on your save."
+                    : "Compatibility looks good. You are playing on the host's save.";
                 _compatibilitySeverity = SessionIssueSeverity.None;
             }
             else
@@ -869,16 +869,10 @@ namespace CupheadOnline.Sync
                 return;
             }
 
-            uint localTick = MultiplayerSession.Tick;
-            uint hostTick = snapshot.HostTick;
-            uint tickDelta = localTick > hostTick ? localTick - hostTick : hostTick - localTick;
-            if (snapshot.IsInLevel && tickDelta > 240)
-            {
-                _desyncSummary = "Simulation drift detected (" + tickDelta + " ticks). Use REQUEST RESYNC.";
-                _desyncSeverity = SessionIssueSeverity.Warning;
-                return;
-            }
-
+            // Session ticks count physics steps since each peer's own session
+            // start, so their absolute difference is not a drift signal (it was
+            // a permanent false alarm). Real divergence is measured by the
+            // DesyncSentinel's boss-HP / position samples instead.
             if (_lastHostSnapshotAt > 0f && Time.unscaledTime - _lastHostSnapshotAt > 4f)
             {
                 _desyncSummary = "Host snapshots stalled - request a resync if gameplay diverges.";
@@ -942,6 +936,11 @@ namespace CupheadOnline.Sync
                 : "scene:" + snapshot.SceneName + ":" + snapshot.CurrentMapScene;
             if (targetKey == _lastAutoFollowTarget && Time.unscaledTime - _lastAutoFollowAt < 2.5f)
                 return;
+            if (SceneLoader.CurrentlyLoading)
+                return;
+
+            if (snapshot.RngSeed != 0u)
+                RngSync.SetSeed(snapshot.RngSeed);
 
             if (snapshot.IsInLevel && Enum.IsDefined(typeof(Levels), snapshot.CurrentLevel))
             {
@@ -1035,11 +1034,6 @@ namespace CupheadOnline.Sync
         private static bool IsTitleScene()
         {
             return string.Equals(GetActiveSceneName(), "scene_title", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static SessionIssueSeverity MaxSeverity(SessionIssueSeverity left, SessionIssueSeverity right)
-        {
-            return left >= right ? left : right;
         }
 
         private static bool IsStaleHostSnapshot(SessionSnapshotPacket pkt)

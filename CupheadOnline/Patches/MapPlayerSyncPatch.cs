@@ -77,11 +77,7 @@ namespace CupheadOnline.Patches
                 return true;
 
             if (!MultiplayerSession.IsNetworkControlledPlayer(player.id))
-            {
-                if (MultiplayerSession.IsLocalPlayer(player.id))
-                    MultiplayerSession.IncrementTick();
                 return true;
-            }
 
             RemoteInputDriver.Tick(player.id);
             if (MultiplayerSession.IsHost && player.id <= PlayerId.PlayerTwo)
@@ -104,9 +100,33 @@ namespace CupheadOnline.Patches
             if (!authoritativeBuiltIn && !MultiplayerSession.IsLocalPlayer(player.id))
                 return;
 
+            // Guest: keep its own map walker aligned with the host's copy, so
+            // level nodes, NPCs and shop doors trigger on both machines.
+            if (!authoritativeBuiltIn && MultiplayerSession.IsClient)
+            {
+                OwnPlayerReconciler.Apply(__instance.transform);
+                OwnPlayerReconciler.RecordLocalPosition(__instance.transform.position, OwnPlayerReconciler.MapUnitScale);
+            }
+
+            // The map motor runs per rendered frame, but receivers only accept
+            // one state per simulation tick; skip the redundant sends.
+            int slot = (int)player.id;
+            if (slot >= 0 && slot < LastSentTicks.Length)
+            {
+                if (HasSent[slot] && LastSentTicks[slot] == MultiplayerSession.Tick)
+                    return;
+                HasSent[slot] = true;
+                LastSentTicks[slot] = MultiplayerSession.Tick;
+            }
+
             var packet = BuildMapStatePacket(player, __instance);
+            if (authoritativeBuiltIn && MultiplayerSession.IsNetworkControlledPlayer(player.id))
+                RemoteInputDriver.TryGetInputAck((byte)player.id, out packet.AckInputSeq, out packet.AckAgeMs);
             Plugin.Net.SendPlayerState(ref packet);
         }
+
+        static readonly uint[] LastSentTicks = new uint[2];
+        static readonly bool[] HasSent = new bool[2];
 
         static PlayerStatePacket BuildMapStatePacket(MapPlayerController player, MapPlayerMotor motor)
         {

@@ -978,7 +978,6 @@ namespace CupheadOnline.Patches
                 if (t < 0.75f) return;
             }
 
-            if (LobbyScreen.Instance != null) return;
             UpdateMainFooterText();
 
             var ef = MpMenuState.EnumItemsField;
@@ -1085,9 +1084,28 @@ namespace CupheadOnline.Patches
             Plugin.Log.LogInfo("[Menu] Exited Credits.");
         }
 
+        static string _clipboardCache = string.Empty;
+        static float _clipboardReadAt = -10f;
+
+        /// <summary>
+        /// The menu asks for this several times per frame (labels + hints); the
+        /// OS clipboard is read at most twice a second.
+        /// </summary>
+        static string ReadClipboardThrottled()
+        {
+            float now = Time.unscaledTime;
+            if (now - _clipboardReadAt >= 0.5f)
+            {
+                _clipboardReadAt = now;
+                try { _clipboardCache = GUIUtility.systemCopyBuffer ?? string.Empty; }
+                catch { _clipboardCache = string.Empty; }
+            }
+            return _clipboardCache;
+        }
+
         static bool TryGetClipboardLobbyId(out string rawText, out string lobbyId)
         {
-            rawText = GUIUtility.systemCopyBuffer;
+            rawText = ReadClipboardThrottled();
             lobbyId = string.Empty;
             if (string.IsNullOrEmpty(rawText) || rawText.Trim().Length == 0)
                 return false;
@@ -1673,7 +1691,6 @@ namespace CupheadOnline.Patches
                     ? MpMenuState.MainMenuMpIndex
                     : MpMenuState.SavedMainSel);
 
-            LobbyScreen.Hide();
             if (!preserveConnection)
                 Plugin.Net.Shutdown();
             Plugin.Log.LogInfo("[Menu] Exited MP menu.");
